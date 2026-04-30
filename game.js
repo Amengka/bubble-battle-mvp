@@ -1,0 +1,1669 @@
+(function () {
+  "use strict";
+
+  var COLS = 13;
+  var ROWS = 11;
+  var TILE = 64;
+  var BOMB_TIME = 2200;
+  var BLAST_TIME = 520;
+  var BLAST_DAMAGE_TIME = 90;
+  var RESUME_COUNTDOWN_TIME = 3000;
+  var ROUND_TIME = 120000;
+  var ROUND_DELAY = 1500;
+  var AI_DANGER_WINDOW = 1350;
+  var AI_ESCAPE_DEPTH = 9;
+
+  var canvas = document.getElementById("gameCanvas");
+  var ctx = canvas.getContext("2d");
+  var roundStatus = document.getElementById("roundStatus");
+  var roundTimer = document.getElementById("roundTimer");
+  var hudTimer = document.getElementById("hudTimer");
+  var hudBombs = document.getElementById("hudBombs");
+  var hudFire = document.getElementById("hudFire");
+  var hudSpeed = document.getElementById("hudSpeed");
+  var hudWins = document.getElementById("hudWins");
+  var toast = document.getElementById("toast");
+  var statBombs = document.getElementById("statBombs");
+  var statFire = document.getElementById("statFire");
+  var statSpeed = document.getElementById("statSpeed");
+  var statWins = document.getElementById("statWins");
+  var scoreList = document.getElementById("scoreList");
+  var pauseBtn = document.getElementById("pauseBtn");
+  var resetBtn = document.getElementById("resetBtn");
+  var newMapBtn = document.getElementById("newMapBtn");
+  var difficultyButtons = document.querySelectorAll("[data-difficulty]");
+  var mapButtons = document.querySelectorAll("[data-map]");
+  var joystick = document.getElementById("joystick");
+  var joystickKnob = document.getElementById("joystickKnob");
+  var pauseButtons = document.querySelectorAll("[data-pause]");
+
+  var keys = {};
+  var touchDir = null;
+  var joystickPointer = null;
+  var toastTimer = 0;
+  var lastFrame = performance.now();
+  var difficulty = "easy";
+  var mapIndex = 0;
+  var difficultySettings = {
+    easy: {
+      label: "Easy",
+      softRate: 0.48,
+      startSafeRadius: 2,
+      aiThinkMin: 450,
+      aiThinkMax: 650,
+      aiBombChance: 0.35,
+      aiAggression: 0.65,
+      aiItemWeight: 32,
+      playerStart: { bombs: 1, fire: 2, speed: 2 },
+      aiStart: { bombs: 1, fire: 2, speed: 1 },
+      dropFire: 0.13,
+      dropBomb: 0.24,
+      dropSpeed: 0.36
+    },
+    normal: {
+      label: "Normal",
+      softRate: 0.58,
+      startSafeRadius: 2,
+      aiThinkMin: 210,
+      aiThinkMax: 380,
+      aiBombChance: 0.7,
+      aiAggression: 1,
+      aiItemWeight: 24,
+      playerStart: { bombs: 1, fire: 2, speed: 1 },
+      aiStart: { bombs: 1, fire: 2, speed: 1 },
+      dropFire: 0.1,
+      dropBomb: 0.18,
+      dropSpeed: 0.27
+    },
+    hard: {
+      label: "Hard",
+      softRate: 0.64,
+      startSafeRadius: 1,
+      aiThinkMin: 120,
+      aiThinkMax: 240,
+      aiBombChance: 0.9,
+      aiAggression: 1.45,
+      aiItemWeight: 18,
+      playerStart: { bombs: 1, fire: 2, speed: 1 },
+      aiStart: { bombs: 1, fire: 2, speed: 2 },
+      dropFire: 0.08,
+      dropBomb: 0.15,
+      dropSpeed: 0.22
+    }
+  };
+  var mapTemplates = [
+    {
+      id: "classic",
+      name: "Classic",
+      softDelta: 0,
+      layout: [
+        "#############",
+        "#...........#",
+        "#.#T#.#T#.#.#",
+        "#...........#",
+        "#.#.#.#.#.#.#",
+        "#.....H.....#",
+        "#.#.#.#.#.#.#",
+        "#...........#",
+        "#.#T#.#T#.#.#",
+        "#...........#",
+        "#############"
+      ]
+    },
+    {
+      id: "crossfire",
+      name: "Crossfire",
+      softDelta: -0.04,
+      layout: [
+        "#############",
+        "#...........#",
+        "#.#.#.#.#.#.#",
+        "#...#T..#...#",
+        "#.#.###.#.#.#",
+        "#..H..#..H..#",
+        "#.#.###.#.#.#",
+        "#...#..T#...#",
+        "#.#.#.#.#.#.#",
+        "#...........#",
+        "#############"
+      ]
+    },
+    {
+      id: "garden",
+      name: "Garden",
+      softDelta: -0.08,
+      layout: [
+        "#############",
+        "#...........#",
+        "#.#.T.#.T.#.#",
+        "#...T...T...#",
+        "#...#.#.#...#",
+        "#.#.......#.#",
+        "#...#.#.#...#",
+        "#...T...T...#",
+        "#.#.T.#.T.#.#",
+        "#...........#",
+        "#############"
+      ]
+    },
+    {
+      id: "ruins",
+      name: "Ruins",
+      softDelta: 0.04,
+      layout: [
+        "#############",
+        "#...........#",
+        "#.###.#.###.#",
+        "#..H#...#H..#",
+        "#.#.#.#.#.#.#",
+        "#..T..#..T..#",
+        "#.#.#.#.#.#.#",
+        "#..H#...#H..#",
+        "#.###.#.###.#",
+        "#...........#",
+        "#############"
+      ]
+    }
+  ];
+
+  var starts = [
+    { x: 1, y: 1 },
+    { x: COLS - 2, y: 1 },
+    { x: 1, y: ROWS - 2 },
+    { x: COLS - 2, y: ROWS - 2 }
+  ];
+  var directions = [
+    { x: 0, y: -1 },
+    { x: 0, y: 1 },
+    { x: -1, y: 0 },
+    { x: 1, y: 0 }
+  ];
+  var characterStyles = [
+    {
+      body: "#4fb0d8",
+      side: "#2a789a",
+      top: "#8bd6e8",
+      dark: "#143846",
+      light: "#d7fbff",
+      accent: "#f2cf4b",
+      trim: "#f7f8f0",
+      mark: "Y",
+      pattern: "pilot"
+    },
+    {
+      body: "#db6558",
+      side: "#9f3b35",
+      top: "#f39a7e",
+      dark: "#3a1714",
+      light: "#ffdfcf",
+      accent: "#f6d352",
+      trim: "#fff0df",
+      mark: "B",
+      pattern: "bolt"
+    },
+    {
+      body: "#78bf69",
+      side: "#4f8a45",
+      top: "#a8df8b",
+      dark: "#183d24",
+      light: "#e7fff0",
+      accent: "#e7efba",
+      trim: "#f5fff7",
+      mark: "M",
+      pattern: "mint"
+    },
+    {
+      body: "#e4b84a",
+      side: "#9f7426",
+      top: "#f8d76b",
+      dark: "#3d2b10",
+      light: "#fff6bc",
+      accent: "#7fd0d7",
+      trim: "#fff2a8",
+      mark: "G",
+      pattern: "gold"
+    }
+  ];
+
+  var state = makeGame(false, false, true);
+
+  function makeGame(keepScores, advanceRound, resetRound) {
+    var oldPlayers = state && state.players ? state.players : [];
+    var settings = currentDifficulty();
+    var round = 1;
+    if (state && !resetRound) {
+      round = advanceRound ? state.round + 1 : state.round;
+    }
+    return {
+      round: round,
+      grid: makeGrid(),
+      bombs: [],
+      blasts: [],
+      ended: false,
+      paused: false,
+      resumeCountdown: 0,
+      timeLeft: ROUND_TIME,
+      nextRoundAt: 0,
+      resultText: "",
+      players: [
+        makePlayer(0, "You", starts[0], characterStyles[0], false, keepScores ? oldPlayers[0] : null, settings.playerStart),
+        makePlayer(1, "Bolt", starts[1], characterStyles[1], true, keepScores ? oldPlayers[1] : null, settings.aiStart),
+        makePlayer(2, "Mint", starts[2], characterStyles[2], true, keepScores ? oldPlayers[2] : null, settings.aiStart),
+        makePlayer(3, "Gold", starts[3], characterStyles[3], true, keepScores ? oldPlayers[3] : null, settings.aiStart)
+      ]
+    };
+  }
+
+  function makePlayer(id, name, start, style, ai, old, startStats) {
+    return {
+      id: id,
+      name: name,
+      x: start.x,
+      y: start.y,
+      color: style.body,
+      style: style,
+      ai: ai,
+      alive: true,
+      maxBombs: startStats.bombs,
+      fire: startStats.fire,
+      speed: startStats.speed,
+      wins: old ? old.wins : 0,
+      bombsActive: 0,
+      moveCooldown: 0,
+      aiCooldown: randomAiCooldown(),
+      aiPlan: null,
+      face: { x: 0, y: 1 },
+      visualX: start.x,
+      visualY: start.y,
+      moveFromX: start.x,
+      moveFromY: start.y,
+      moveToX: start.x,
+      moveToY: start.y,
+      moveAnim: 0,
+      moveAnimTotal: 1,
+      walkCycle: 0
+    };
+  }
+
+  function currentDifficulty() {
+    return difficultySettings[difficulty];
+  }
+
+  function currentMap() {
+    return mapTemplates[mapIndex] || mapTemplates[0];
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function randomAiCooldown() {
+    var settings = currentDifficulty();
+    return settings.aiThinkMin + Math.random() * (settings.aiThinkMax - settings.aiThinkMin);
+  }
+
+  function makeGrid() {
+    var grid = [];
+    var template = currentMap();
+    var softRate = clamp(currentDifficulty().softRate + template.softDelta, 0.25, 0.78);
+    for (var y = 0; y < ROWS; y += 1) {
+      var row = [];
+      for (var x = 0; x < COLS; x += 1) {
+        var tileCode = template.layout[y] ? template.layout[y][x] : ".";
+        if (tileCode === "#") {
+          row.push("hard");
+        } else if (isStartSafe(x, y)) {
+          row.push("floor");
+        } else if (tileCode === "T") {
+          row.push("tree");
+        } else if (tileCode === "H") {
+          row.push("house");
+        } else if (tileCode === "-") {
+          row.push("floor");
+        } else if (tileCode === "s") {
+          row.push("soft");
+        } else {
+          row.push(Math.random() < softRate ? "soft" : "floor");
+        }
+      }
+      grid.push(row);
+    }
+    return grid;
+  }
+
+  function isStartSafe(x, y) {
+    return starts.some(function (start) {
+      return Math.abs(start.x - x) + Math.abs(start.y - y) <= currentDifficulty().startSafeRadius;
+    });
+  }
+
+  function tileAt(x, y) {
+    if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return "hard";
+    return state.grid[y][x];
+  }
+
+  function setTile(x, y, tile) {
+    state.grid[y][x] = tile;
+  }
+
+  function isBlockingTile(tile) {
+    return tile === "hard" || tile === "soft" || tile === "tree" || tile === "house";
+  }
+
+  function isBlastStopTile(tile) {
+    return tile === "hard" || tile === "house";
+  }
+
+  function isBreakableTile(tile) {
+    return tile === "soft" || tile === "tree";
+  }
+
+  function hasBombAt(x, y) {
+    return state.bombs.some(function (bomb) {
+      return !bomb.exploded && bomb.x === x && bomb.y === y;
+    });
+  }
+
+  function playerAt(x, y) {
+    return state.players.find(function (player) {
+      return player.alive && player.x === x && player.y === y;
+    });
+  }
+
+  function isWalkable(x, y, player) {
+    var tile = tileAt(x, y);
+    if (isBlockingTile(tile)) return false;
+    if (hasBombAt(x, y) && !(player && player.x === x && player.y === y)) return false;
+    return !playerAt(x, y);
+  }
+
+  function moveDelay(player) {
+    return Math.max(74, 165 - (player.speed - 1) * 22);
+  }
+
+  function tryMove(player, dx, dy) {
+    if (!player.alive || state.ended || state.paused) return;
+    setPlayerFace(player, dx, dy);
+    var nx = player.x + dx;
+    var ny = player.y + dy;
+    if (!isWalkable(nx, ny, player)) return;
+    beginStepAnimation(player, nx, ny);
+    player.x = nx;
+    player.y = ny;
+    collectItem(player);
+    if (isBlasted(nx, ny)) killPlayer(player);
+  }
+
+  function setPlayerFace(player, dx, dy) {
+    if (dx || dy) player.face = { x: dx, y: dy };
+  }
+
+  function beginStepAnimation(player, tx, ty) {
+    player.moveFromX = player.visualX;
+    player.moveFromY = player.visualY;
+    player.moveToX = tx;
+    player.moveToY = ty;
+    player.moveAnimTotal = Math.max(90, Math.min(165, moveDelay(player)));
+    player.moveAnim = player.moveAnimTotal;
+    player.walkCycle += 1;
+  }
+
+  function collectItem(player) {
+    var tile = tileAt(player.x, player.y);
+    if (tile === "item-fire") {
+      player.fire = Math.min(6, player.fire + 1);
+      setTile(player.x, player.y, "floor");
+      flash(player.name + " got Fire Up");
+    } else if (tile === "item-bomb") {
+      player.maxBombs = Math.min(5, player.maxBombs + 1);
+      setTile(player.x, player.y, "floor");
+      flash(player.name + " got Bomb Up");
+    } else if (tile === "item-speed") {
+      player.speed = Math.min(5, player.speed + 1);
+      setTile(player.x, player.y, "floor");
+      flash(player.name + " got Speed Up");
+    }
+  }
+
+  function placeBomb(player) {
+    if (!player.alive || state.ended || state.paused) return;
+    if (player.bombsActive >= player.maxBombs || hasBombAt(player.x, player.y)) return;
+    state.bombs.push({
+      x: player.x,
+      y: player.y,
+      owner: player.id,
+      fire: player.fire,
+      timer: BOMB_TIME,
+      exploded: false
+    });
+    player.bombsActive += 1;
+  }
+
+  function explodeBomb(bomb) {
+    if (bomb.exploded) return;
+    bomb.exploded = true;
+    var owner = state.players[bomb.owner];
+    if (owner) owner.bombsActive = Math.max(0, owner.bombsActive - 1);
+    var cells = [{ x: bomb.x, y: bomb.y }];
+    var dirs = [
+      { x: 1, y: 0 },
+      { x: -1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 0, y: -1 }
+    ];
+    dirs.forEach(function (dir) {
+      for (var i = 1; i <= bomb.fire; i += 1) {
+        var x = bomb.x + dir.x * i;
+        var y = bomb.y + dir.y * i;
+        var tile = tileAt(x, y);
+        if (isBlastStopTile(tile)) break;
+        cells.push({ x: x, y: y });
+        if (isBreakableTile(tile)) {
+          break;
+        }
+      }
+    });
+
+    var hits = [];
+    cells.forEach(function (cell) {
+      var tile = tileAt(cell.x, cell.y);
+      if (isBreakableTile(tile)) {
+        setTile(cell.x, cell.y, randomDrop());
+      } else if (tile.indexOf("item-") === 0) {
+        setTile(cell.x, cell.y, "floor");
+      }
+      state.bombs.forEach(function (other) {
+        if (!other.exploded && other.x === cell.x && other.y === cell.y) {
+          other.timer = Math.min(other.timer, 60);
+        }
+      });
+      var hit = playerAt(cell.x, cell.y);
+      if (hit && hits.indexOf(hit) === -1) hits.push(hit);
+    });
+
+    state.blasts.push({ cells: cells, timer: BLAST_TIME, damageTimer: BLAST_DAMAGE_TIME });
+    hits.forEach(function (hit) {
+      killPlayer(hit, true);
+    });
+    if (hits.length) checkRoundEnd();
+  }
+
+  function randomDrop() {
+    var roll = Math.random();
+    var settings = currentDifficulty();
+    if (roll < settings.dropFire) return "item-fire";
+    if (roll < settings.dropBomb) return "item-bomb";
+    if (roll < settings.dropSpeed) return "item-speed";
+    return "floor";
+  }
+
+  function isBlasted(x, y) {
+    return state.blasts.some(function (blast) {
+      if (blast.damageTimer <= 0) return false;
+      return blast.cells.some(function (cell) {
+        return cell.x === x && cell.y === y;
+      });
+    });
+  }
+
+  function killPlayer(player, deferRoundCheck) {
+    if (!player.alive) return;
+    player.alive = false;
+    flash(player.name + " is out");
+    if (!deferRoundCheck) checkRoundEnd();
+  }
+
+  function checkRoundEnd() {
+    var alive = state.players.filter(function (player) {
+      return player.alive;
+    });
+    if (alive.length > 1 || state.ended) return;
+    state.ended = true;
+    state.nextRoundAt = performance.now() + ROUND_DELAY;
+    if (alive.length === 1) {
+      alive[0].wins += 1;
+      state.resultText = alive[0].name + " wins";
+      flash(alive[0].name + " wins the round");
+    } else {
+      state.resultText = "Draw";
+      flash("Draw round");
+    }
+  }
+
+  function endRoundByTime(now) {
+    if (state.ended) return;
+    state.timeLeft = 0;
+    state.ended = true;
+    state.nextRoundAt = now + ROUND_DELAY;
+    state.resultText = "Time Up - Draw";
+    flash("Time up - draw");
+  }
+
+  function update(dt, now) {
+    if (state.paused && !state.ended) {
+      updateResumeCountdown(dt);
+      updateUi();
+      return;
+    }
+    if (!state.ended) {
+      updateRoundTimer(dt, now);
+      if (state.ended) {
+        updateUi();
+        return;
+      }
+    }
+    updateHuman(dt);
+    updateAI(dt);
+    updateBombs(dt);
+    updateBlasts(dt);
+    checkBlastDamage();
+    updatePlayerVisuals(dt);
+    if (state.ended && now >= state.nextRoundAt) {
+      state = makeGame(true, true, false);
+    }
+    updateUi();
+  }
+
+  function updateRoundTimer(dt, now) {
+    state.timeLeft = Math.max(0, state.timeLeft - dt);
+    if (state.timeLeft <= 0 && aliveCount() > 1) {
+      endRoundByTime(now);
+    } else if (state.timeLeft <= 0) {
+      checkRoundEnd();
+    }
+  }
+
+  function updateResumeCountdown(dt) {
+    if (state.resumeCountdown <= 0) return;
+    state.resumeCountdown = Math.max(0, state.resumeCountdown - dt);
+    if (state.resumeCountdown === 0) {
+      state.paused = false;
+      syncPauseButtons();
+    }
+  }
+
+  function updatePlayerVisuals(dt) {
+    state.players.forEach(function (player) {
+      if (player.moveAnim > 0) {
+        player.moveAnim = Math.max(0, player.moveAnim - dt);
+        var progress = 1 - player.moveAnim / player.moveAnimTotal;
+        var eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+        player.visualX = player.moveFromX + (player.moveToX - player.moveFromX) * eased;
+        player.visualY = player.moveFromY + (player.moveToY - player.moveFromY) * eased;
+      } else {
+        player.visualX = player.x;
+        player.visualY = player.y;
+      }
+    });
+  }
+
+  function updateHuman(dt) {
+    var player = state.players[0];
+    if (!player || !player.alive) return;
+    player.moveCooldown -= dt;
+    var dir = currentInputDir();
+    if (dir) {
+      setPlayerFace(player, dir.x, dir.y);
+      if (player.moveCooldown <= 0) {
+        tryMove(player, dir.x, dir.y);
+        player.moveCooldown = moveDelay(player);
+      }
+    }
+  }
+
+  function currentInputDir() {
+    if (touchDir) return touchDir;
+    if (keys.arrowup || keys.w) return { x: 0, y: -1 };
+    if (keys.arrowdown || keys.s) return { x: 0, y: 1 };
+    if (keys.arrowleft || keys.a) return { x: -1, y: 0 };
+    if (keys.arrowright || keys.d) return { x: 1, y: 0 };
+    return null;
+  }
+
+  function updateAI(dt) {
+    state.players.forEach(function (player) {
+      if (!player.ai || !player.alive || state.ended) return;
+      player.moveCooldown -= dt;
+      player.aiCooldown -= dt;
+      if (player.aiCooldown <= 0) {
+        player.aiPlan = chooseAiMove(player);
+        player.aiCooldown = randomAiCooldown();
+      }
+      if (player.aiPlan && player.moveCooldown <= 0) {
+        if (player.aiPlan.bomb) placeBomb(player);
+        tryMove(player, player.aiPlan.x, player.aiPlan.y);
+        player.moveCooldown = moveDelay(player) + 30;
+      }
+    });
+  }
+
+  function chooseAiMove(player) {
+    if (isDangerousSoon(player.x, player.y)) {
+      return findEscapeMove(player, state.bombs, AI_ESCAPE_DEPTH) || cautiousWait();
+    }
+
+    var options = directions.concat([{ x: 0, y: 0 }]);
+    var target = nearestEnemy(player);
+    var settings = currentDifficulty();
+    var wantsBomb = adjacentBreakable(player.x, player.y) || lineThreatAt(player.x, player.y, player.fire, target);
+    var bombEscape = wantsBomb ? findBombEscapeMove(player) : null;
+    if (bombEscape && Math.random() < settings.aiBombChance) {
+      return { x: bombEscape.x, y: bombEscape.y, score: 100, bomb: true };
+    }
+
+    var best = { x: 0, y: 0, score: -Infinity, bomb: false };
+    options.forEach(function (dir) {
+      var nx = player.x + dir.x;
+      var ny = player.y + dir.y;
+      if (dir.x || dir.y) {
+        if (!isWalkable(nx, ny, player)) return;
+      }
+      var score = Math.random() * 8;
+      if (isDangerousSoon(nx, ny)) score -= 130;
+      if (isDangerous(nx, ny)) score -= 180;
+      if (!findEscapeMoveFrom(player, nx, ny, state.bombs, 5)) score -= 35;
+      if (tileAt(nx, ny).indexOf("item-") === 0) score += settings.aiItemWeight;
+      if (target) score -= distance(nx, ny, target.x, target.y) * 3 * settings.aiAggression;
+      if (adjacentBreakable(nx, ny)) score += 16;
+      if (lineThreatAt(nx, ny, player.fire, target)) score += 18 * settings.aiAggression;
+      if (dir.x === 0 && dir.y === 0) score -= 8;
+      if (score > best.score) best = { x: dir.x, y: dir.y, score: score, bomb: false };
+    });
+    return best;
+  }
+
+  function cautiousWait() {
+    return { x: 0, y: 0, score: 0, bomb: false };
+  }
+
+  function nearestEnemy(player) {
+    var enemies = state.players.filter(function (other) {
+      return other.alive && other.id !== player.id;
+    });
+    enemies.sort(function (a, b) {
+      return distance(player.x, player.y, a.x, a.y) - distance(player.x, player.y, b.x, b.y);
+    });
+    return enemies[0] || null;
+  }
+
+  function distance(ax, ay, bx, by) {
+    return Math.abs(ax - bx) + Math.abs(ay - by);
+  }
+
+  function adjacentBreakable(x, y) {
+    return directions.some(function (dir) {
+      return isBreakableTile(tileAt(x + dir.x, y + dir.y));
+    });
+  }
+
+  function lineThreatAt(x, y, fire, target) {
+    if (!target) return false;
+    if (x !== target.x && y !== target.y) return false;
+    if (distance(x, y, target.x, target.y) > fire) return false;
+    return clearLine(x, y, target.x, target.y);
+  }
+
+  function clearLine(ax, ay, bx, by) {
+    var dx = Math.sign(bx - ax);
+    var dy = Math.sign(by - ay);
+    var x = ax + dx;
+    var y = ay + dy;
+    while (x !== bx || y !== by) {
+      var tile = tileAt(x, y);
+      if (isBlockingTile(tile)) return false;
+      x += dx;
+      y += dy;
+    }
+    return true;
+  }
+
+  function findBombEscapeMove(player) {
+    if (player.bombsActive >= player.maxBombs || hasBombAt(player.x, player.y)) return null;
+    var virtualBombs = state.bombs.concat([{
+      x: player.x,
+      y: player.y,
+      owner: player.id,
+      fire: player.fire,
+      timer: BOMB_TIME,
+      exploded: false,
+      virtual: true
+    }]);
+    return findEscapeMove(player, virtualBombs, AI_ESCAPE_DEPTH);
+  }
+
+  function findEscapeMove(player, bombs, maxDepth) {
+    return findEscapeMoveFrom(player, player.x, player.y, bombs, maxDepth);
+  }
+
+  function findEscapeMoveFrom(player, startX, startY, bombs, maxDepth) {
+    var startKey = startX + "," + startY;
+    var queue = [{ x: startX, y: startY, depth: 0, first: null }];
+    var seen = {};
+    seen[startKey] = true;
+
+    while (queue.length) {
+      var node = queue.shift();
+      if (node.depth > 0 && !isThreatenedByBombs(node.x, node.y, bombs, true)) {
+        return node.first || { x: 0, y: 0 };
+      }
+      if (node.depth >= maxDepth) continue;
+
+      directions.forEach(function (dir) {
+        var nx = node.x + dir.x;
+        var ny = node.y + dir.y;
+        var key = nx + "," + ny;
+        if (seen[key]) return;
+        if (!isAiPathable(nx, ny, player, startX, startY, bombs)) return;
+        seen[key] = true;
+        queue.push({
+          x: nx,
+          y: ny,
+          depth: node.depth + 1,
+          first: node.first || dir
+        });
+      });
+    }
+    return null;
+  }
+
+  function isAiPathable(x, y, player, startX, startY, bombs) {
+    var tile = tileAt(x, y);
+    if (isBlockingTile(tile)) return false;
+    if (hasAnyBombAt(bombs, x, y) && !(x === startX && y === startY)) return false;
+    var other = playerAt(x, y);
+    return !other || other.id === player.id;
+  }
+
+  function hasAnyBombAt(bombs, x, y) {
+    return bombs.some(function (bomb) {
+      return !bomb.exploded && bomb.x === x && bomb.y === y;
+    });
+  }
+
+  function bombBlastCells(bomb) {
+    var cells = [{ x: bomb.x, y: bomb.y }];
+    directions.forEach(function (dir) {
+      for (var i = 1; i <= bomb.fire; i += 1) {
+        var x = bomb.x + dir.x * i;
+        var y = bomb.y + dir.y * i;
+        var tile = tileAt(x, y);
+        if (isBlastStopTile(tile)) break;
+        cells.push({ x: x, y: y });
+        if (isBreakableTile(tile)) break;
+      }
+    });
+    return cells;
+  }
+
+  function isThreatenedByBombs(x, y, bombs, includeFuture) {
+    return bombs.some(function (bomb) {
+      if (bomb.exploded) return false;
+      if (!includeFuture && bomb.timer > AI_DANGER_WINDOW) return false;
+      return bombBlastCells(bomb).some(function (cell) {
+        return cell.x === x && cell.y === y;
+      });
+    });
+  }
+
+  function isDangerous(x, y) {
+    if (isBlasted(x, y)) return true;
+    return isThreatenedByBombs(x, y, state.bombs, false);
+  }
+
+  function isDangerousSoon(x, y) {
+    if (isBlasted(x, y)) return true;
+    return isThreatenedByBombs(x, y, state.bombs, true);
+  }
+
+  function updateBombs(dt) {
+    state.bombs.forEach(function (bomb) {
+      if (bomb.exploded) return;
+      bomb.timer -= dt;
+      if (bomb.timer <= 0) explodeBomb(bomb);
+    });
+    state.bombs = state.bombs.filter(function (bomb) {
+      return !bomb.exploded;
+    });
+  }
+
+  function updateBlasts(dt) {
+    state.blasts.forEach(function (blast) {
+      blast.timer -= dt;
+      blast.damageTimer = Math.max(0, blast.damageTimer - dt);
+    });
+    state.blasts = state.blasts.filter(function (blast) {
+      return blast.timer > 0;
+    });
+  }
+
+  function checkBlastDamage() {
+    var hits = state.players.filter(function (player) {
+      return player.alive && isBlasted(player.x, player.y);
+    });
+    hits.forEach(function (player) {
+      killPlayer(player, true);
+    });
+    if (hits.length) checkRoundEnd();
+  }
+
+  function flash(message) {
+    toast.textContent = message;
+    toast.classList.add("show");
+    toastTimer = 1200;
+  }
+
+  function updateToast(dt) {
+    if (toastTimer <= 0) return;
+    toastTimer -= dt;
+    if (toastTimer <= 0) toast.classList.remove("show");
+  }
+
+  function updateUi() {
+    var player = state.players[0];
+    var pauseLabel = "";
+    if (state.resumeCountdown > 0) {
+      pauseLabel = " - Resume in " + Math.ceil(state.resumeCountdown / 1000);
+    } else if (state.paused) {
+      pauseLabel = " - Paused";
+    }
+    roundStatus.textContent = currentDifficulty().label + " - " + currentMap().name + " - Round " + state.round + " - " + aliveCount() + " left - Time " + formatTime(state.timeLeft) + pauseLabel;
+    if (roundTimer) roundTimer.textContent = formatTime(state.timeLeft);
+    if (hudTimer) hudTimer.textContent = formatTime(state.timeLeft);
+    statBombs.textContent = player.maxBombs;
+    statFire.textContent = player.fire;
+    statSpeed.textContent = player.speed;
+    statWins.textContent = player.wins;
+    if (hudBombs) hudBombs.textContent = player.maxBombs;
+    if (hudFire) hudFire.textContent = player.fire;
+    if (hudSpeed) hudSpeed.textContent = player.speed;
+    if (hudWins) hudWins.textContent = player.wins;
+    syncPauseButtons();
+    scoreList.innerHTML = state.players.map(function (p) {
+      return '<div class="score-row ' + (p.alive ? "" : "dead") + '">' +
+        '<i class="score-dot" style="background:' + p.color + '"></i>' +
+        '<span>' + p.name + '</span>' +
+        '<b>' + p.wins + '</b>' +
+        "</div>";
+    }).join("");
+  }
+
+  function aliveCount() {
+    return state.players.filter(function (player) {
+      return player.alive;
+    }).length;
+  }
+
+  function formatTime(ms) {
+    var totalSeconds = Math.ceil(Math.max(0, ms) / 1000);
+    var minutes = Math.floor(totalSeconds / 60);
+    var seconds = totalSeconds % 60;
+    return minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawGrid();
+    drawBombs();
+    drawBlasts();
+    drawPlayers();
+    if (state.ended || state.paused) drawOverlay();
+  }
+
+  function drawGrid() {
+    for (var y = 0; y < ROWS; y += 1) {
+      for (var x = 0; x < COLS; x += 1) {
+        drawTileBase(x, y);
+      }
+    }
+    for (var oy = 0; oy < ROWS; oy += 1) {
+      for (var ox = 0; ox < COLS; ox += 1) {
+        drawTileObject(ox, oy, tileAt(ox, oy));
+      }
+    }
+  }
+
+  function drawTileBase(x, y) {
+    var px = x * TILE;
+    var py = y * TILE;
+    var top = (x + y) % 2 === 0 ? "#2d3a37" : "#293532";
+    var edge = (x + y) % 2 === 0 ? "#1d2828" : "#1a2424";
+    ctx.fillStyle = "#111719";
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.fillStyle = edge;
+    fillPoly([
+      [px + 4, py + 53],
+      [px + 32, py + 61],
+      [px + 60, py + 53],
+      [px + 60, py + 60],
+      [px + 32, py + 67],
+      [px + 4, py + 60]
+    ]);
+    ctx.fillStyle = top;
+    fillPoly([
+      [px + 4, py + 12],
+      [px + 32, py + 4],
+      [px + 60, py + 12],
+      [px + 60, py + 53],
+      [px + 32, py + 61],
+      [px + 4, py + 53]
+    ]);
+    ctx.fillStyle = "rgba(255,255,255,0.035)";
+    ctx.fillRect(px + 10, py + 17, 18, 2);
+    ctx.fillRect(px + 36, py + 43, 14, 2);
+    ctx.strokeStyle = "rgba(0,0,0,0.24)";
+    ctx.strokeRect(px + 4.5, py + 4.5, TILE - 9, TILE - 9);
+  }
+
+  function drawTileObject(x, y, tile) {
+    var px = x * TILE;
+    var py = y * TILE;
+    if (tile === "hard") {
+      drawHardBlock(px, py);
+    } else if (tile === "soft") {
+      drawCrate(px, py);
+    } else if (tile === "tree") {
+      drawTree(px, py);
+    } else if (tile === "house") {
+      drawHouse(px, py);
+    } else if (tile.indexOf("item-") === 0) {
+      drawItem(px, py, tile);
+    }
+  }
+
+  function fillPoly(points) {
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], points[0][1]);
+    for (var i = 1; i < points.length; i += 1) {
+      ctx.lineTo(points[i][0], points[i][1]);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawHardBlock(px, py) {
+    ctx.fillStyle = "rgba(0,0,0,0.24)";
+    ctx.fillRect(px + 13, py + 47, 42, 10);
+    ctx.fillStyle = "#667178";
+    fillPoly([[px + 10, py + 17], [px + 32, py + 7], [px + 54, py + 17], [px + 32, py + 27]]);
+    ctx.fillStyle = "#48545b";
+    fillPoly([[px + 10, py + 17], [px + 32, py + 27], [px + 32, py + 55], [px + 10, py + 44]]);
+    ctx.fillStyle = "#39434a";
+    fillPoly([[px + 54, py + 17], [px + 32, py + 27], [px + 32, py + 55], [px + 54, py + 44]]);
+    ctx.fillStyle = "rgba(255,255,255,0.12)";
+    fillPoly([[px + 17, py + 18], [px + 32, py + 12], [px + 47, py + 18], [px + 32, py + 24]]);
+  }
+
+  function drawCrate(px, py) {
+    ctx.fillStyle = "rgba(0,0,0,0.24)";
+    ctx.fillRect(px + 11, py + 49, 44, 8);
+    ctx.fillStyle = "#ba8350";
+    fillPoly([[px + 11, py + 21], [px + 32, py + 11], [px + 53, py + 21], [px + 32, py + 31]]);
+    ctx.fillStyle = "#8e5d35";
+    fillPoly([[px + 11, py + 21], [px + 32, py + 31], [px + 32, py + 55], [px + 11, py + 44]]);
+    ctx.fillStyle = "#764b2d";
+    fillPoly([[px + 53, py + 21], [px + 32, py + 31], [px + 32, py + 55], [px + 53, py + 44]]);
+    ctx.strokeStyle = "rgba(54, 31, 19, 0.62)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(px + 18, py + 27);
+    ctx.lineTo(px + 30, py + 34);
+    ctx.moveTo(px + 14, py + 39);
+    ctx.lineTo(px + 30, py + 47);
+    ctx.moveTo(px + 49, py + 27);
+    ctx.lineTo(px + 34, py + 35);
+    ctx.moveTo(px + 50, py + 40);
+    ctx.lineTo(px + 35, py + 48);
+    ctx.stroke();
+  }
+
+  function drawTree(px, py) {
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.beginPath();
+    ctx.ellipse(px + 33, py + 52, 21, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#714b2c";
+    fillPoly([[px + 27, py + 31], [px + 38, py + 31], [px + 39, py + 53], [px + 25, py + 53]]);
+    ctx.fillStyle = "#8c6338";
+    ctx.fillRect(px + 28, py + 31, 5, 22);
+    ctx.fillStyle = "#376a3b";
+    ctx.beginPath();
+    ctx.arc(px + 32, py + 23, 19, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#4f8c4a";
+    ctx.beginPath();
+    ctx.arc(px + 22, py + 30, 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px + 43, py + 31, 17, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#75b668";
+    ctx.beginPath();
+    ctx.arc(px + 28, py + 18, 8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawHouse(px, py) {
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.fillRect(px + 11, py + 50, 47, 8);
+    ctx.fillStyle = "#b78b5e";
+    fillPoly([[px + 15, py + 27], [px + 33, py + 35], [px + 33, py + 55], [px + 15, py + 46]]);
+    ctx.fillStyle = "#8f6a49";
+    fillPoly([[px + 51, py + 27], [px + 33, py + 35], [px + 33, py + 55], [px + 51, py + 46]]);
+    ctx.fillStyle = "#d5b17a";
+    fillPoly([[px + 15, py + 27], [px + 33, py + 18], [px + 51, py + 27], [px + 33, py + 35]]);
+    ctx.fillStyle = "#8f3e36";
+    fillPoly([[px + 10, py + 26], [px + 33, py + 10], [px + 56, py + 26], [px + 33, py + 38]]);
+    ctx.fillStyle = "#b95a46";
+    fillPoly([[px + 15, py + 26], [px + 33, py + 15], [px + 51, py + 26], [px + 33, py + 34]]);
+    ctx.fillStyle = "#3c2a20";
+    ctx.fillRect(px + 26, py + 41, 9, 14);
+    ctx.fillStyle = "#79b7c6";
+    ctx.fillRect(px + 40, py + 36, 7, 6);
+  }
+
+  function drawItem(px, py, tile) {
+    var color = tile === "item-fire" ? "#f07550" : tile === "item-bomb" ? "#66bdd5" : "#7fce72";
+    var label = tile === "item-fire" ? "F" : tile === "item-bomb" ? "B" : "S";
+    ctx.fillStyle = "rgba(0,0,0,0.24)";
+    ctx.beginPath();
+    ctx.ellipse(px + TILE / 2, py + 47, 18, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = color;
+    roundRect(px + 18, py + 18, 28, 28, 7);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.28)";
+    roundRect(px + 21, py + 20, 22, 7, 4);
+    ctx.fill();
+    ctx.fillStyle = "#121619";
+    ctx.font = "bold 18px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, px + TILE / 2, py + TILE / 2 + 1);
+  }
+
+  function drawBombs() {
+    state.bombs.forEach(function (bomb) {
+      var px = bomb.x * TILE + TILE / 2;
+      var py = bomb.y * TILE + TILE / 2;
+      var pulse = 1 + Math.sin(performance.now() / 90) * 0.08;
+      ctx.fillStyle = "#15191d";
+      ctx.beginPath();
+      ctx.arc(px, py + 3, 18 * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = bomb.timer < 700 ? "#f4d45d" : "#7b8790";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.fillStyle = "#f4d45d";
+      ctx.fillRect(px + 10, py - 22, 8, 8);
+    });
+  }
+
+  function drawBlasts() {
+    state.blasts.forEach(function (blast) {
+      var alpha = Math.max(0.22, blast.timer / BLAST_TIME);
+      var lethal = blast.damageTimer > 0;
+      blast.cells.forEach(function (cell) {
+        var px = cell.x * TILE;
+        var py = cell.y * TILE;
+        if (lethal) {
+          ctx.fillStyle = "rgba(245, 205, 75, " + alpha + ")";
+          ctx.fillRect(px + 4, py + 4, TILE - 8, TILE - 8);
+          ctx.fillStyle = "rgba(230, 86, 64, " + (alpha * 0.72) + ")";
+          ctx.fillRect(px + 17, py + 17, TILE - 34, TILE - 34);
+        } else {
+          ctx.fillStyle = "rgba(246, 238, 198, " + (alpha * 0.24) + ")";
+          ctx.fillRect(px + 8, py + 8, TILE - 16, TILE - 16);
+          ctx.fillStyle = "rgba(145, 171, 178, " + (alpha * 0.22) + ")";
+          ctx.fillRect(px + 20, py + 20, TILE - 40, TILE - 40);
+        }
+      });
+    });
+  }
+
+  function drawPlayers() {
+    state.players.forEach(function (player) {
+      if (!player.alive) return;
+      var px = player.visualX * TILE + TILE / 2;
+      var py = player.visualY * TILE + TILE / 2;
+      drawCharacter(player, px, py);
+    });
+  }
+
+  function drawCharacter(player, px, py) {
+    var style = player.style;
+    var facing = facingName(player.face);
+    var walk = walkPose(player);
+    var leanX = (player.face ? player.face.x : 0) * 2;
+    var leanY = facing === "back" ? -2 : facing === "front" ? 1 : 0;
+
+    ctx.save();
+    ctx.translate(px + leanX, py + leanY);
+
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.beginPath();
+    ctx.ellipse(0, 23, 24, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.translate(0, -walk.bob);
+    drawCharacterFeet(style, facing, walk);
+    if (facing === "back") {
+      drawCharacterBack(player, style, walk);
+    } else if (facing === "left" || facing === "right") {
+      if (facing === "left") ctx.scale(-1, 1);
+      drawCharacterSide(player, style, walk);
+    } else {
+      drawCharacterFront(player, style, walk);
+    }
+
+    ctx.restore();
+  }
+
+  function walkPose(player) {
+    if (player.moveAnim <= 0 || player.moveAnimTotal <= 0) {
+      return { bob: 0, swing: 0, frame: 0, active: false };
+    }
+    var progress = 1 - player.moveAnim / player.moveAnimTotal;
+    var cycle = progress * Math.PI * 2;
+    var swing = Math.sin(cycle);
+    return {
+      bob: Math.abs(swing) * 3,
+      swing: swing,
+      frame: progress < 0.5 ? -1 : 1,
+      active: true
+    };
+  }
+
+  function facingName(face) {
+    if (!face) return "front";
+    if (face.y < 0) return "back";
+    if (face.x < 0) return "left";
+    if (face.x > 0) return "right";
+    return "front";
+  }
+
+  function drawCharacterFeet(style, facing, walk) {
+    ctx.fillStyle = style.dark;
+    if (facing === "left" || facing === "right") {
+      var sign = facing === "left" ? -1 : 1;
+      var sideStep = walk.frame * 3;
+      ctx.beginPath();
+      ctx.ellipse(sign * (-8 - sideStep), 20 + sideStep * 0.35, 7, 5, -0.1 * sign, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(sign * (12 + sideStep), 20 - sideStep * 0.35, 9, 5, 0.16 * sign, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    var frontStep = walk.frame * 2;
+    ctx.beginPath();
+    ctx.ellipse(-11, 19 + frontStep, 8, 5, -0.18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(11, 19 - frontStep, 8, 5, 0.18, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawCharacterFront(player, style, walk) {
+    var armSwing = walk.frame * 3;
+    ctx.fillStyle = style.side;
+    roundRect(-29, -2 + armSwing, 16, 27, 8);
+    ctx.fill();
+    roundRect(13, -2 - armSwing, 16, 27, 8);
+    ctx.fill();
+
+    ctx.fillStyle = style.side;
+    roundRect(-22, -7, 44, 36, 14);
+    ctx.fill();
+    ctx.fillStyle = "rgba(0,0,0,0.15)";
+    roundRect(-19, 13, 38, 14, 9);
+    ctx.fill();
+
+    ctx.fillStyle = style.body;
+    roundRect(-20, -19, 40, 36, 14);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.22)";
+    ctx.lineWidth = 2;
+    roundRect(-20, -19, 40, 36, 14);
+    ctx.stroke();
+
+    ctx.fillStyle = style.top;
+    ctx.beginPath();
+    ctx.ellipse(0, -20, 22, 16, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.26)";
+    ctx.beginPath();
+    ctx.ellipse(-7, -27, 8, 4, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = style.dark;
+    roundRect(-14, -18, 28, 14, 7);
+    ctx.fill();
+    ctx.fillStyle = style.light;
+    roundRect(-10, -15, 20, 6, 4);
+    ctx.fill();
+
+    ctx.fillStyle = style.accent;
+    roundRect(-13, 8, 26, 5, 3);
+    ctx.fill();
+    drawCharacterDetails(player, style, "front");
+
+    ctx.fillStyle = style.dark;
+    ctx.font = "bold 11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(style.mark, 0, 1);
+  }
+
+  function drawCharacterBack(player, style, walk) {
+    var armSwing = walk.frame * 3;
+    ctx.fillStyle = style.side;
+    roundRect(-27, -1 - armSwing, 14, 26, 8);
+    ctx.fill();
+    roundRect(13, -1 + armSwing, 14, 26, 8);
+    ctx.fill();
+
+    ctx.fillStyle = style.side;
+    roundRect(-22, -6, 44, 35, 14);
+    ctx.fill();
+    ctx.fillStyle = "rgba(0,0,0,0.18)";
+    roundRect(-15, -1, 30, 25, 10);
+    ctx.fill();
+
+    ctx.fillStyle = style.body;
+    roundRect(-20, -18, 40, 35, 14);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 2;
+    roundRect(-20, -18, 40, 35, 14);
+    ctx.stroke();
+
+    ctx.fillStyle = style.top;
+    ctx.beginPath();
+    ctx.ellipse(0, -21, 22, 16, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(0,0,0,0.16)";
+    ctx.beginPath();
+    ctx.ellipse(0, -13, 15, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = style.side;
+    roundRect(-11, -11, 22, 22, 8);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.14)";
+    roundRect(-7, -8, 14, 15, 6);
+    ctx.fill();
+
+    ctx.fillStyle = style.accent;
+    roundRect(-13, 8, 26, 5, 3);
+    ctx.fill();
+    drawCharacterDetails(player, style, "back");
+  }
+
+  function drawCharacterSide(player, style, walk) {
+    var armSwing = walk.frame * 3;
+    ctx.fillStyle = style.side;
+    roundRect(-21, -1 + armSwing, 17, 26, 8);
+    ctx.fill();
+    ctx.fillStyle = style.dark;
+    roundRect(13, -armSwing, 13, 23, 7);
+    ctx.fill();
+
+    ctx.fillStyle = style.side;
+    roundRect(-17, -5, 39, 34, 14);
+    ctx.fill();
+    ctx.fillStyle = style.body;
+    roundRect(-12, -19, 34, 36, 14);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.lineWidth = 2;
+    roundRect(-12, -19, 34, 36, 14);
+    ctx.stroke();
+
+    ctx.fillStyle = style.top;
+    ctx.beginPath();
+    ctx.ellipse(2, -21, 21, 15, 0.05, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.22)";
+    ctx.beginPath();
+    ctx.ellipse(-5, -28, 7, 3, -0.25, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = style.dark;
+    roundRect(1, -17, 20, 13, 7);
+    ctx.fill();
+    ctx.fillStyle = style.light;
+    roundRect(5, -14, 12, 5, 4);
+    ctx.fill();
+
+    ctx.fillStyle = style.accent;
+    roundRect(-5, 8, 24, 5, 3);
+    ctx.fill();
+    drawCharacterDetails(player, style, "side");
+
+    ctx.fillStyle = style.dark;
+    ctx.font = "bold 10px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(style.mark, 8, 1);
+  }
+
+  function drawCharacterDetails(player, style, facing) {
+    if (style.pattern === "pilot") {
+      ctx.fillStyle = style.accent;
+      roundRect(facing === "side" ? 3 : -4, -36, 8, 11, 4);
+      ctx.fill();
+      ctx.fillStyle = style.trim;
+      ctx.fillRect(facing === "side" ? 5 : -2, -33, 4, 12);
+      ctx.fillStyle = style.accent;
+      ctx.beginPath();
+      ctx.arc(facing === "side" ? 7 : 0, -37, 4, 0, Math.PI * 2);
+      ctx.fill();
+      if (facing === "back") {
+        ctx.fillStyle = style.trim;
+        roundRect(-4, -5, 8, 16, 4);
+        ctx.fill();
+      }
+    } else if (style.pattern === "bolt") {
+      ctx.fillStyle = style.accent;
+      ctx.beginPath();
+      if (facing === "side") {
+        ctx.moveTo(4, -31);
+        ctx.lineTo(16, -29);
+        ctx.lineTo(9, -18);
+        ctx.lineTo(18, -17);
+        ctx.lineTo(3, 3);
+        ctx.lineTo(7, -11);
+        ctx.lineTo(-1, -12);
+      } else {
+        ctx.moveTo(-5, -31);
+        ctx.lineTo(8, -31);
+        ctx.lineTo(1, -19);
+        ctx.lineTo(11, -19);
+        ctx.lineTo(-4, facing === "back" ? 6 : 2);
+        ctx.lineTo(0, -12);
+        ctx.lineTo(-9, -12);
+      }
+      ctx.closePath();
+      ctx.fill();
+      if (facing !== "back") {
+        ctx.fillStyle = style.side;
+        ctx.beginPath();
+        ctx.moveTo(-22, -18);
+        ctx.lineTo(-31, -9);
+        ctx.lineTo(-20, -7);
+        ctx.closePath();
+        ctx.fill();
+        if (facing !== "side") {
+          ctx.beginPath();
+          ctx.moveTo(22, -18);
+          ctx.lineTo(31, -9);
+          ctx.lineTo(20, -7);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+    } else if (style.pattern === "mint") {
+      ctx.fillStyle = style.accent;
+      ctx.beginPath();
+      ctx.ellipse(facing === "side" ? 3 : -8, -33, 8, 4, -0.55, 0, Math.PI * 2);
+      ctx.fill();
+      if (facing !== "side") {
+        ctx.beginPath();
+        ctx.ellipse(8, -33, 8, 4, 0.55, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.strokeStyle = style.light;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(facing === "side" ? 7 : 0, -33);
+      ctx.lineTo(facing === "side" ? 5 : 0, -21);
+      ctx.stroke();
+      ctx.fillStyle = style.trim;
+      roundRect(facing === "side" ? -8 : -16, -2, 7, 15, 4);
+      ctx.fill();
+      if (facing !== "side") {
+        roundRect(9, -2, 7, 15, 4);
+        ctx.fill();
+      }
+    } else if (style.pattern === "gold") {
+      ctx.fillStyle = style.accent;
+      ctx.beginPath();
+      ctx.moveTo(facing === "side" ? -4 : -12, -29);
+      ctx.lineTo(facing === "side" ? 1 : -6, -39);
+      ctx.lineTo(facing === "side" ? 6 : 0, -29);
+      ctx.lineTo(facing === "side" ? 10 : 6, -39);
+      ctx.lineTo(facing === "side" ? 16 : 12, -29);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = style.light;
+      ctx.beginPath();
+      ctx.arc(facing === "side" ? 7 : 0, -32, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = style.accent;
+      ctx.beginPath();
+      ctx.moveTo(facing === "side" ? 8 : 0, 6);
+      ctx.lineTo(facing === "side" ? 15 : 7, -1);
+      ctx.lineTo(facing === "side" ? 8 : 0, -8);
+      ctx.lineTo(facing === "side" ? 1 : -7, -1);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  function drawOverlay() {
+    ctx.fillStyle = "rgba(10, 12, 14, 0.58)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#f4f2ea";
+    ctx.font = "bold 42px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    if (state.paused && !state.ended) {
+      if (state.resumeCountdown > 0) {
+        ctx.font = "bold 86px sans-serif";
+        ctx.fillText(Math.ceil(state.resumeCountdown / 1000), canvas.width / 2, canvas.height / 2 - 8);
+        ctx.font = "bold 18px sans-serif";
+        ctx.fillStyle = "rgba(244, 242, 234, 0.74)";
+        ctx.fillText("Resuming", canvas.width / 2, canvas.height / 2 + 58);
+        return;
+      }
+      ctx.fillText("Paused", canvas.width / 2, canvas.height / 2);
+      ctx.font = "bold 18px sans-serif";
+      ctx.fillStyle = "rgba(244, 242, 234, 0.74)";
+      ctx.fillText("Press P or Resume to start countdown", canvas.width / 2, canvas.height / 2 + 42);
+      return;
+    }
+    var winner = state.players.find(function (player) {
+      return player.alive;
+    });
+    ctx.fillText(state.resultText || (winner ? winner.name + " wins" : "Draw"), canvas.width / 2, canvas.height / 2);
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function frame(now) {
+    var dt = Math.min(48, now - lastFrame);
+    lastFrame = now;
+    update(dt, now);
+    updateToast(dt);
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  function syncMapButtons() {
+    mapButtons.forEach(function (button) {
+      button.classList.toggle("active", button.getAttribute("data-map") === currentMap().id);
+    });
+  }
+
+  function allPauseButtons() {
+    var buttons = [];
+    if (pauseBtn) buttons.push(pauseBtn);
+    pauseButtons.forEach(function (button) {
+      buttons.push(button);
+    });
+    return buttons;
+  }
+
+  function syncPauseButtons() {
+    allPauseButtons().forEach(function (button) {
+      button.textContent = state.resumeCountdown > 0 ? "Cancel" : state.paused ? "Resume" : "Pause";
+      button.classList.toggle("active", state.paused);
+    });
+  }
+
+  function togglePause() {
+    if (state.ended) return;
+    if (!state.paused) {
+      state.paused = true;
+      state.resumeCountdown = 0;
+      resetJoystick();
+    } else if (state.resumeCountdown > 0) {
+      state.resumeCountdown = 0;
+    } else {
+      state.resumeCountdown = RESUME_COUNTDOWN_TIME;
+    }
+    syncPauseButtons();
+  }
+
+  function selectMap(mapId) {
+    var nextIndex = mapTemplates.findIndex(function (template) {
+      return template.id === mapId;
+    });
+    if (nextIndex < 0) return;
+    mapIndex = nextIndex;
+    syncMapButtons();
+    state = makeGame(false, false, true);
+    flash(currentMap().name + " map");
+  }
+
+  function updateJoystick(event) {
+    var rect = joystick.getBoundingClientRect();
+    var centerX = rect.left + rect.width / 2;
+    var centerY = rect.top + rect.height / 2;
+    var dx = event.clientX - centerX;
+    var dy = event.clientY - centerY;
+    var distanceFromCenter = Math.sqrt(dx * dx + dy * dy);
+    var limit = rect.width * 0.32;
+    var ratio = distanceFromCenter > 0 ? Math.min(distanceFromCenter, limit) / distanceFromCenter : 0;
+    var knobX = dx * ratio;
+    var knobY = dy * ratio;
+
+    joystickKnob.style.setProperty("--stick-x", knobX + "px");
+    joystickKnob.style.setProperty("--stick-y", knobY + "px");
+
+    if (distanceFromCenter < rect.width * 0.13) {
+      touchDir = null;
+    } else if (Math.abs(dx) > Math.abs(dy)) {
+      touchDir = { x: dx > 0 ? 1 : -1, y: 0 };
+    } else {
+      touchDir = { x: 0, y: dy > 0 ? 1 : -1 };
+    }
+    event.preventDefault();
+  }
+
+  function resetJoystick() {
+    touchDir = null;
+    joystickPointer = null;
+    if (joystick) joystick.classList.remove("active");
+    if (joystickKnob) {
+      joystickKnob.style.setProperty("--stick-x", "0px");
+      joystickKnob.style.setProperty("--stick-y", "0px");
+    }
+  }
+
+  document.addEventListener("keydown", function (event) {
+    var key = event.key.toLowerCase();
+    keys[key] = true;
+    if (key === " " || key === "spacebar") {
+      placeBomb(state.players[0]);
+      event.preventDefault();
+    }
+    if (key === "r") {
+      state = makeGame(true, false, false);
+    }
+    if (key === "p" && !event.repeat) {
+      togglePause();
+      event.preventDefault();
+    }
+    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].indexOf(key) !== -1) {
+      event.preventDefault();
+    }
+  });
+
+  document.addEventListener("keyup", function (event) {
+    keys[event.key.toLowerCase()] = false;
+  });
+
+  resetBtn.addEventListener("click", function () {
+    state = makeGame(true, false, false);
+  });
+
+  if (pauseBtn) {
+    pauseBtn.addEventListener("click", function () {
+      togglePause();
+    });
+  }
+
+  newMapBtn.addEventListener("click", function () {
+    mapIndex = (mapIndex + 1) % mapTemplates.length;
+    syncMapButtons();
+    state = makeGame(false, false, true);
+    flash(currentMap().name + " map");
+  });
+
+  difficultyButtons.forEach(function (button) {
+    button.addEventListener("click", function () {
+      difficulty = button.getAttribute("data-difficulty");
+      difficultyButtons.forEach(function (item) {
+        item.classList.toggle("active", item === button);
+      });
+      state = makeGame(false, false, true);
+      flash(currentDifficulty().label + " difficulty");
+    });
+  });
+
+  mapButtons.forEach(function (button) {
+    button.addEventListener("click", function () {
+      selectMap(button.getAttribute("data-map"));
+    });
+  });
+
+  pauseButtons.forEach(function (button) {
+    button.addEventListener("click", function () {
+      togglePause();
+    });
+  });
+
+  if (joystick && joystickKnob) {
+    joystick.addEventListener("pointerdown", function (event) {
+      joystickPointer = event.pointerId;
+      joystick.classList.add("active");
+      joystick.setPointerCapture(event.pointerId);
+      updateJoystick(event);
+    });
+    joystick.addEventListener("pointermove", function (event) {
+      if (joystickPointer === event.pointerId) updateJoystick(event);
+    });
+    joystick.addEventListener("pointerup", function (event) {
+      if (joystickPointer === event.pointerId) resetJoystick();
+    });
+    joystick.addEventListener("pointercancel", function (event) {
+      if (joystickPointer === event.pointerId) resetJoystick();
+    });
+  }
+
+  document.querySelector("[data-bomb]").addEventListener("click", function () {
+    placeBomb(state.players[0]);
+  });
+
+  updateUi();
+  requestAnimationFrame(frame);
+}());

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bubble Battle MVP</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="play-area" aria-label="Game board">
+        <div class="top-bar">
+          <div>
+            <h1>Bubble Battle</h1>
+            <p id="roundStatus">Round 1</p>
+          </div>
+          <div class="actions">
+            <button id="pauseBtn" type="button">Pause</button>
+            <button id="newMapBtn" type="button">New Map</button>
+            <button id="resetBtn" type="button">Reset</button>
+          </div>
+        </div>
+
+        <div class="mobile-hud" aria-label="Player status">
+          <div><span>Time</span><b id="hudTimer">2:00</b></div>
+          <div><span>Bomb</span><b id="hudBombs">1</b></div>
+          <div><span>Fire</span><b id="hudFire">2</b></div>
+          <div><span>Speed</span><b id="hudSpeed">1</b></div>
+          <div><span>Wins</span><b id="hudWins">0</b></div>
+        </div>
+
+        <div class="board-wrap">
+          <canvas id="gameCanvas" width="832" height="704"></canvas>
+          <div id="toast" class="toast" role="status" aria-live="polite"></div>
+        </div>
+
+        <div class="mobile-controls" aria-label="Touch controls">
+          <div id="joystick" class="joystick" role="application" aria-label="Move joystick">
+            <div id="joystickKnob" class="joystick-knob"></div>
+          </div>
+          <button class="mobile-bomb" type="button" data-bomb="true" title="Bomb">Bomb</button>
+          <button class="mobile-pause" type="button" data-pause="true" title="Pause">Pause</button>
+        </div>
+      </section>
+
+      <aside class="side-panel">
+        <section>
+          <h2>Difficulty</h2>
+          <div class="difficulty-tabs" role="group" aria-label="Difficulty">
+            <button class="active" type="button" data-difficulty="easy">Easy</button>
+            <button type="button" data-difficulty="normal">Normal</button>
+            <button type="button" data-difficulty="hard">Hard</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>Map</h2>
+          <div class="map-tabs" role="group" aria-label="Map">
+            <button class="active" type="button" data-map="classic">Classic</button>
+            <button type="button" data-map="crossfire">Crossfire</button>
+            <button type="button" data-map="garden">Garden</button>
+            <button type="button" data-map="ruins">Ruins</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>Player</h2>
+          <dl class="stats-grid">
+            <div><dt>Bombs</dt><dd id="statBombs">1</dd></div>
+            <div><dt>Fire</dt><dd id="statFire">2</dd></div>
+            <div><dt>Speed</dt><dd id="statSpeed">1</dd></div>
+            <div><dt>Wins</dt><dd id="statWins">0</dd></div>
+          </dl>
+        </section>
+
+        <section>
+          <h2>Match</h2>
+          <div class="timer-display">
+            <span>Time</span>
+            <b id="roundTimer">2:00</b>
+          </div>
+          <div id="scoreList" class="score-list"></div>
+        </section>
+
+        <section>
+          <h2>Controls</h2>
+          <div class="controls-list">
+            <span>Move: WASD / Arrow Keys</span>
+            <span>Touch: Joystick</span>
+            <span>Bomb: Space</span>
+            <span>Pause: P</span>
+            <span>Restart: R</span>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <script src="game.js"></script>
+  </body>
+</html>
