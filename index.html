@@ -2,7 +2,9 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+    <meta name="description" content="A fast 2.5D browser bubble battle game built for desktop keyboard play and mobile touch controls.">
+    <meta name="theme-color" content="#17191c">
     <title>Bubble Battle MVP</title>
     <link rel="stylesheet" href="styles.css">
   </head>
@@ -13,6 +15,10 @@
           <div>
             <h1>Bubble Battle</h1>
             <p id="roundStatus">Round 1</p>
+          </div>
+          <div class="mobile-utility-actions" aria-label="Mobile menu">
+            <button class="mobile-icon-button mobile-settings" type="button" data-settings="true" aria-label="Settings" title="Settings">Set</button>
+            <button class="mobile-icon-button mobile-pause" type="button" data-pause="true" aria-label="Pause" title="Pause">II</button>
           </div>
           <div class="actions">
             <button id="pauseBtn" type="button">Pause</button>
@@ -39,7 +45,6 @@
             <div id="joystickKnob" class="joystick-knob"></div>
           </div>
           <button class="mobile-bomb" type="button" data-bomb="true" title="Bomb">Bomb</button>
-          <button class="mobile-pause" type="button" data-pause="true" title="Pause">Pause</button>
         </div>
       </section>
 
@@ -94,6 +99,39 @@
         </section>
       </aside>
     </main>
+
+    <div id="settingsModal" class="settings-modal" hidden>
+      <div class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="settings-head">
+          <h2 id="settingsTitle">Settings</h2>
+          <button class="settings-close" type="button" data-settings-close="true" title="Close">Close</button>
+        </div>
+
+        <section>
+          <h2>Difficulty</h2>
+          <div class="difficulty-tabs" role="group" aria-label="Mobile difficulty">
+            <button class="active" type="button" data-difficulty="easy">Easy</button>
+            <button type="button" data-difficulty="normal">Normal</button>
+            <button type="button" data-difficulty="hard">Hard</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>Map</h2>
+          <div class="map-tabs" role="group" aria-label="Mobile map">
+            <button class="active" type="button" data-map="classic">Classic</button>
+            <button type="button" data-map="crossfire">Crossfire</button>
+            <button type="button" data-map="garden">Garden</button>
+            <button type="button" data-map="ruins">Ruins</button>
+          </div>
+        </section>
+
+        <div class="settings-actions">
+          <button type="button" data-reset-round="true">Reset Round</button>
+          <button type="button" data-next-map="true">Next Map</button>
+        </div>
+      </div>
+    </div>
 
     <script src="game.js"></script>
   </body>
