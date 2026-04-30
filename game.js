@@ -37,10 +37,16 @@
   var joystickKnob = document.getElementById("joystickKnob");
   var bombButton = document.querySelector("[data-bomb]");
   var pauseButtons = document.querySelectorAll("[data-pause]");
+  var settingsModal = document.getElementById("settingsModal");
+  var settingsButtons = document.querySelectorAll("[data-settings]");
+  var settingsCloseButtons = document.querySelectorAll("[data-settings-close]");
+  var resetRoundButtons = document.querySelectorAll("[data-reset-round]");
+  var nextMapButtons = document.querySelectorAll("[data-next-map]");
 
   var keys = {};
   var touchDir = null;
   var joystickPointer = null;
+  var settingsResumeAfterClose = false;
   var toastTimer = 0;
   var lastFrame = performance.now();
   var difficulty = "easy";
@@ -1504,6 +1510,12 @@
     });
   }
 
+  function syncDifficultyButtons() {
+    difficultyButtons.forEach(function (button) {
+      button.classList.toggle("active", button.getAttribute("data-difficulty") === difficulty);
+    });
+  }
+
   function allPauseButtons() {
     var buttons = [];
     if (pauseBtn) buttons.push(pauseBtn);
@@ -1515,7 +1527,14 @@
 
   function syncPauseButtons() {
     allPauseButtons().forEach(function (button) {
-      button.textContent = state.resumeCountdown > 0 ? "Cancel" : state.paused ? "Resume" : "Pause";
+      var label = state.resumeCountdown > 0 ? "Cancel resume countdown" : state.paused ? "Resume" : "Pause";
+      button.setAttribute("aria-label", label);
+      button.title = label;
+      if (button.classList.contains("mobile-pause")) {
+        button.textContent = state.resumeCountdown > 0 ? "X" : state.paused ? "Go" : "II";
+      } else {
+        button.textContent = state.resumeCountdown > 0 ? "Cancel" : state.paused ? "Resume" : "Pause";
+      }
       button.classList.toggle("active", state.paused);
     });
   }
@@ -1525,6 +1544,7 @@
     if (!state.paused) {
       state.paused = true;
       state.resumeCountdown = 0;
+      keys = {};
       resetJoystick();
     } else if (state.resumeCountdown > 0) {
       state.resumeCountdown = 0;
@@ -1532,6 +1552,59 @@
       state.resumeCountdown = RESUME_COUNTDOWN_TIME;
     }
     syncPauseButtons();
+  }
+
+  function openSettings(event) {
+    captureInput(event);
+    if (!state.ended && !state.paused) {
+      state.paused = true;
+      state.resumeCountdown = 0;
+      settingsResumeAfterClose = true;
+      keys = {};
+      resetJoystick();
+    } else {
+      if (state.resumeCountdown > 0) state.resumeCountdown = 0;
+      settingsResumeAfterClose = false;
+    }
+    if (settingsModal) settingsModal.hidden = false;
+    syncPauseButtons();
+  }
+
+  function closeSettings(event) {
+    if (event) event.preventDefault();
+    if (settingsModal) settingsModal.hidden = true;
+    if (settingsResumeAfterClose && state.paused && !state.ended) {
+      state.resumeCountdown = RESUME_COUNTDOWN_TIME;
+    }
+    settingsResumeAfterClose = false;
+    syncPauseButtons();
+  }
+
+  function isSettingsOpen() {
+    return settingsModal && !settingsModal.hidden;
+  }
+
+  function pauseForInterruption() {
+    if (state.ended || state.paused) return;
+    state.paused = true;
+    state.resumeCountdown = 0;
+    keys = {};
+    resetJoystick();
+    syncPauseButtons();
+    updateUi();
+  }
+
+  function resetRound() {
+    state = makeGame(true, false, false);
+    closeSettings();
+  }
+
+  function nextMap() {
+    mapIndex = (mapIndex + 1) % mapTemplates.length;
+    syncMapButtons();
+    state = makeGame(false, false, true);
+    flash(currentMap().name + " map");
+    closeSettings();
   }
 
   function selectMap(mapId) {
@@ -1543,6 +1616,7 @@
     syncMapButtons();
     state = makeGame(false, false, true);
     flash(currentMap().name + " map");
+    closeSettings();
   }
 
   function updateJoystick(event) {
@@ -1600,6 +1674,13 @@
 
   document.addEventListener("keydown", function (event) {
     var key = event.key.toLowerCase();
+    if (isSettingsOpen()) {
+      if (key === "escape") closeSettings(event);
+      if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "spacebar", "enter", "r", "p"].indexOf(key) !== -1) {
+        event.preventDefault();
+      }
+      return;
+    }
     keys[key] = true;
     if (key === " " || key === "spacebar") {
       placeBomb(state.players[0]);
@@ -1612,6 +1693,9 @@
       togglePause();
       event.preventDefault();
     }
+    if (key === "escape") {
+      closeSettings(event);
+    }
     if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].indexOf(key) !== -1) {
       event.preventDefault();
     }
@@ -1621,8 +1705,26 @@
     keys[event.key.toLowerCase()] = false;
   });
 
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) pauseForInterruption();
+  });
+
+  window.addEventListener("blur", pauseForInterruption);
+
+  ["contextmenu", "selectstart", "dragstart", "gesturestart"].forEach(function (eventName) {
+    document.addEventListener(eventName, function (event) {
+      event.preventDefault();
+    }, { capture: true });
+  });
+
+  document.addEventListener("touchmove", function (event) {
+    var target = event.target;
+    var insideSettings = target instanceof Element && target.closest(".settings-sheet");
+    if (!insideSettings) event.preventDefault();
+  }, { passive: false });
+
   resetBtn.addEventListener("click", function () {
-    state = makeGame(true, false, false);
+    resetRound();
   });
 
   if (pauseBtn) {
@@ -1632,20 +1734,16 @@
   }
 
   newMapBtn.addEventListener("click", function () {
-    mapIndex = (mapIndex + 1) % mapTemplates.length;
-    syncMapButtons();
-    state = makeGame(false, false, true);
-    flash(currentMap().name + " map");
+    nextMap();
   });
 
   difficultyButtons.forEach(function (button) {
     button.addEventListener("click", function () {
       difficulty = button.getAttribute("data-difficulty");
-      difficultyButtons.forEach(function (item) {
-        item.classList.toggle("active", item === button);
-      });
+      syncDifficultyButtons();
       state = makeGame(false, false, true);
       flash(currentDifficulty().label + " difficulty");
+      closeSettings();
     });
   });
 
@@ -1662,6 +1760,32 @@
       if (event.detail === 0) togglePause();
     });
   });
+
+  settingsButtons.forEach(function (button) {
+    button.addEventListener("pointerdown", openSettings);
+    button.addEventListener("click", function (event) {
+      event.preventDefault();
+      if (event.detail === 0) openSettings(event);
+    });
+  });
+
+  settingsCloseButtons.forEach(function (button) {
+    button.addEventListener("click", closeSettings);
+  });
+
+  resetRoundButtons.forEach(function (button) {
+    button.addEventListener("click", resetRound);
+  });
+
+  nextMapButtons.forEach(function (button) {
+    button.addEventListener("click", nextMap);
+  });
+
+  if (settingsModal) {
+    settingsModal.addEventListener("click", function (event) {
+      if (event.target === settingsModal) closeSettings(event);
+    });
+  }
 
   if (joystick && joystickKnob) {
     joystick.addEventListener("pointerdown", function (event) {
@@ -1692,5 +1816,7 @@
   }
 
   updateUi();
+  syncDifficultyButtons();
+  syncMapButtons();
   requestAnimationFrame(frame);
 }());
