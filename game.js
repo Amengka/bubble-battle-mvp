@@ -35,6 +35,7 @@
   var mapButtons = document.querySelectorAll("[data-map]");
   var joystick = document.getElementById("joystick");
   var joystickKnob = document.getElementById("joystickKnob");
+  var bombButton = document.querySelector("[data-bomb]");
   var pauseButtons = document.querySelectorAll("[data-pause]");
 
   var keys = {};
@@ -1579,6 +1580,24 @@
     }
   }
 
+  function captureInput(event) {
+    if (!event) return;
+    event.preventDefault();
+    if (event.currentTarget && event.currentTarget.setPointerCapture && event.pointerId !== undefined) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+  }
+
+  function handleBombPress(event) {
+    captureInput(event);
+    placeBomb(state.players[0]);
+  }
+
+  function handlePausePress(event) {
+    captureInput(event);
+    togglePause();
+  }
+
   document.addEventListener("keydown", function (event) {
     var key = event.key.toLowerCase();
     keys[key] = true;
@@ -1637,8 +1656,10 @@
   });
 
   pauseButtons.forEach(function (button) {
-    button.addEventListener("click", function () {
-      togglePause();
+    button.addEventListener("pointerdown", handlePausePress);
+    button.addEventListener("click", function (event) {
+      event.preventDefault();
+      if (event.detail === 0) togglePause();
     });
   });
 
@@ -1653,16 +1674,22 @@
       if (joystickPointer === event.pointerId) updateJoystick(event);
     });
     joystick.addEventListener("pointerup", function (event) {
+      event.preventDefault();
       if (joystickPointer === event.pointerId) resetJoystick();
     });
     joystick.addEventListener("pointercancel", function (event) {
+      event.preventDefault();
       if (joystickPointer === event.pointerId) resetJoystick();
     });
   }
 
-  document.querySelector("[data-bomb]").addEventListener("click", function () {
-    placeBomb(state.players[0]);
-  });
+  if (bombButton) {
+    bombButton.addEventListener("pointerdown", handleBombPress);
+    bombButton.addEventListener("click", function (event) {
+      event.preventDefault();
+      if (event.detail === 0) placeBomb(state.players[0]);
+    });
+  }
 
   updateUi();
   requestAnimationFrame(frame);

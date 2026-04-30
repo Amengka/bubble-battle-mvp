@@ -15,7 +15,7 @@ A small browser-based Bomberman-like prototype.
 - Round win tracking and quick restart
 - 2-minute arcade round timer; time-up rounds are draws
 - Mobile HUD keeps time and player stats above the board
-- Keyboard and joystick-style touch controls with 3-second resume countdown
+- Keyboard and multi-touch joystick controls with 3-second resume countdown
 
 ## Difficulty
 
@@ -33,7 +33,7 @@ Open `index.html` in a browser.
 - Place bomb: Space
 - Pause/resume: P or Pause, then wait for the 3-second countdown
 - Restart current round: R
-- Touch: drag the joystick and tap Bomb
+- Touch: drag the joystick while tapping Bomb; the mobile Pause button starts the resume countdown
 
 ## Project Shape
 
