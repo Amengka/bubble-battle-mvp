@@ -12,6 +12,11 @@
   --green: #76bd70;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -25,6 +30,8 @@ body {
     var(--bg);
   color: var(--text);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 button {
@@ -35,6 +42,10 @@ button {
   color: var(--text);
   font: inherit;
   cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 button:hover {
@@ -50,6 +61,15 @@ button.active {
   border-color: var(--accent);
   background: #4a3f26;
   color: #fff4c8;
+}
+
+button:focus {
+  outline: none;
+}
+
+button:focus-visible {
+  outline: 2px solid rgba(229, 184, 76, 0.8);
+  outline-offset: 2px;
 }
 
 h1,
@@ -84,6 +104,15 @@ h2 {
 .play-area,
 .side-panel {
   min-width: 0;
+}
+
+.play-area,
+.board-wrap,
+.mobile-hud,
+.mobile-controls {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .top-bar {
@@ -167,6 +196,10 @@ h2 {
   width: 100%;
   height: 100%;
   image-rendering: pixelated;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .toast {
@@ -308,11 +341,13 @@ dd {
 
 .mobile-controls {
   display: none;
-  grid-template-columns: minmax(112px, 132px) repeat(2, minmax(72px, 1fr));
-  gap: 12px;
-  align-items: center;
+  grid-template-columns: minmax(112px, 132px) minmax(112px, 150px);
+  grid-template-rows: 38px 86px;
+  gap: 8px 12px;
+  align-items: stretch;
   width: min(100%, 520px);
   margin-top: 14px;
+  touch-action: none;
 }
 
 .joystick {
@@ -321,6 +356,8 @@ dd {
   position: relative;
   width: min(132px, 100%);
   aspect-ratio: 1;
+  grid-row: 1 / span 2;
+  align-self: center;
   border: 1px solid rgba(244, 242, 234, 0.22);
   border-radius: 50%;
   background:
@@ -377,20 +414,28 @@ dd {
 
 .mobile-bomb {
   width: 100%;
-  min-height: 76px;
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 86px;
   border-color: rgba(229, 184, 76, 0.62);
   background: #4a3f26;
   color: #fff4c8;
   font-weight: 800;
+  font-size: 1.08rem;
+  touch-action: none;
 }
 
 .mobile-pause {
   width: 100%;
-  min-height: 76px;
+  grid-column: 2;
+  grid-row: 1;
+  min-height: 38px;
   border-color: rgba(101, 186, 208, 0.48);
   background: #243d47;
   color: #dff7ff;
   font-weight: 800;
+  font-size: 0.82rem;
+  touch-action: none;
 }
 
 @media (max-width: 980px) {
@@ -427,5 +472,9 @@ dd {
 
   .mobile-controls {
     display: grid;
+  }
+
+  button:focus-visible {
+    outline: none;
   }
 }
