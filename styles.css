@@ -459,6 +459,12 @@ dd {
   touch-action: none;
 }
 
+.mobile-icon-symbol {
+  display: block;
+  font-size: 1.08rem;
+  line-height: 1;
+}
+
 .mobile-pause.active {
   border-color: rgba(229, 184, 76, 0.62);
   background: #4a3f26;
