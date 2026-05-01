@@ -44,6 +44,14 @@
         <div class="board-wrap">
           <canvas id="gameCanvas" width="832" height="704"></canvas>
           <div id="toast" class="toast" role="status" aria-live="polite"></div>
+          <div id="gameFlowOverlay" class="game-flow-overlay" role="dialog" aria-live="polite" aria-labelledby="gameFlowTitle">
+            <div class="game-flow-panel">
+              <p id="gameFlowKicker" class="game-flow-kicker">Ready</p>
+              <h2 id="gameFlowTitle">Bubble Battle</h2>
+              <p id="gameFlowBody">Clear blocks, trap rivals, and survive the 2-minute round.</p>
+              <button id="gameFlowPrimary" class="game-flow-primary" type="button">Start Battle</button>
+            </div>
+          </div>
         </div>
 
         <div class="mobile-controls" aria-label="Touch controls">

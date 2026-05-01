@@ -7,15 +7,28 @@
   var BOMB_TIME = 2200;
   var BLAST_TIME = 520;
   var BLAST_DAMAGE_TIME = 90;
+  var HIT_EFFECT_TIME = 560;
+  var SCREEN_HIT_TIME = 360;
   var RESUME_COUNTDOWN_TIME = 3000;
   var ROUND_TIME = 120000;
   var ROUND_DELAY = 1500;
+  var MIN_MOVE_DELAY = 86;
+  var INPUT_BUFFER_TIME = 150;
+  var MAX_HUMAN_STEPS_PER_FRAME = 1;
+  var JOYSTICK_DEADZONE = 0.18;
+  var JOYSTICK_SWITCH_RATIO = 1.24;
   var AI_DANGER_WINDOW = 1350;
   var AI_ESCAPE_DEPTH = 9;
 
   var canvas = document.getElementById("gameCanvas");
   var ctx = canvas.getContext("2d");
   var appShell = document.querySelector(".app-shell");
+  var boardWrap = document.querySelector(".board-wrap");
+  var gameFlowOverlay = document.getElementById("gameFlowOverlay");
+  var gameFlowKicker = document.getElementById("gameFlowKicker");
+  var gameFlowTitle = document.getElementById("gameFlowTitle");
+  var gameFlowBody = document.getElementById("gameFlowBody");
+  var gameFlowPrimary = document.getElementById("gameFlowPrimary");
   var roundStatus = document.getElementById("roundStatus");
   var roundTimer = document.getElementById("roundTimer");
   var hudTimer = document.getElementById("hudTimer");
@@ -44,16 +57,24 @@
   var settingsCloseButtons = document.querySelectorAll("[data-settings-close]");
   var resetRoundButtons = document.querySelectorAll("[data-reset-round]");
   var nextMapButtons = document.querySelectorAll("[data-next-map]");
+  var gameScript = document.currentScript || document.querySelector("script[src$='game.js']");
 
+  var platformEmbedMode = detectPlatformEmbedMode();
+  var platformReadySent = false;
   var keys = {};
   var touchDir = null;
+  var touchSecondaryDir = null;
   var joystickPointer = null;
   var settingsResumeAfterClose = false;
   var fullscreenTransitionUntil = 0;
+  var gamePhase = "start";
   var toastTimer = 0;
   var lastFrame = performance.now();
   var difficulty = "easy";
   var mapIndex = 0;
+  document.documentElement.classList.toggle("is-platform-embed", platformEmbedMode);
+  if (appShell) appShell.classList.toggle("is-platform-embed", platformEmbedMode);
+
   var difficultySettings = {
     easy: {
       label: "Easy",
@@ -249,6 +270,8 @@
       grid: makeGrid(),
       bombs: [],
       blasts: [],
+      hitEffects: [],
+      screenHitTimer: 0,
       ended: false,
       paused: false,
       resumeCountdown: 0,
@@ -280,6 +303,9 @@
       wins: old ? old.wins : 0,
       bombsActive: 0,
       moveCooldown: 0,
+      moveBuffer: null,
+      moveBufferTimer: 0,
+      moveRemainder: 0,
       aiCooldown: randomAiCooldown(),
       aiPlan: null,
       face: { x: 0, y: 1 },
@@ -307,9 +333,127 @@
     return Math.max(min, Math.min(max, value));
   }
 
+  function queryValue(name) {
+    try {
+      return new URLSearchParams(window.location.search).get(name) || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function queryFlag(name) {
+    var value = queryValue(name).toLowerCase();
+    return value === "1" || value === "true" || value === "yes";
+  }
+
+  function isEmbeddedFrame() {
+    try {
+      return window.self !== window.top;
+    } catch (error) {
+      return true;
+    }
+  }
+
+  function detectPlatformEmbedMode() {
+    return isEmbeddedFrame() ||
+      queryFlag("embed") ||
+      queryFlag("aigameshare") ||
+      queryValue("platform").toLowerCase() === "aigameshare";
+  }
+
   function randomAiCooldown() {
     var settings = currentDifficulty();
     return settings.aiThinkMin + Math.random() * (settings.aiThinkMax - settings.aiThinkMin);
+  }
+
+  function getPlatformApi() {
+    return window.AIGameShare && typeof window.AIGameShare === "object" ? window.AIGameShare : null;
+  }
+
+  function configuredPlatformSdkSrc() {
+    var src = queryValue("platformSdkSrc") ||
+      queryValue("sdkSrc") ||
+      (gameScript ? gameScript.getAttribute("data-platform-sdk-src") : "");
+    if (!src) return "";
+    try {
+      var url = new URL(src, window.location.href);
+      if (url.protocol !== "https:" && url.protocol !== "http:") return "";
+      return url.href;
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function loadPlatformSdk() {
+    if (!platformEmbedMode || getPlatformApi() || document.querySelector("[data-aigameshare-sdk]")) return;
+    var sdkSrc = configuredPlatformSdkSrc();
+    if (!sdkSrc) return;
+    var script = document.createElement("script");
+    script.src = sdkSrc;
+    script.defer = true;
+    script.setAttribute("data-aigameshare-sdk", "true");
+    document.head.appendChild(script);
+  }
+
+  function withPlatformApi(callback, attempts) {
+    var api = getPlatformApi();
+    if (api) {
+      callback(api);
+      return;
+    }
+    if (attempts <= 0) return;
+    window.setTimeout(function () {
+      withPlatformApi(callback, attempts - 1);
+    }, 120);
+  }
+
+  function platformState(reason) {
+    var player = state && state.players ? state.players[0] : null;
+    return {
+      phase: gamePhase,
+      reason: reason || "",
+      round: state ? state.round : 1,
+      difficulty: difficulty,
+      map: currentMap().id,
+      timeLeft: state ? Math.ceil(state.timeLeft / 1000) : Math.ceil(ROUND_TIME / 1000),
+      alive: state ? aliveCount() : 0,
+      paused: Boolean(state && state.paused),
+      playerWins: player ? player.wins : 0,
+      result: state && state.resultText ? state.resultText : ""
+    };
+  }
+
+  function announcePlatformReady() {
+    withPlatformApi(function (api) {
+      if (platformReadySent) return;
+      platformReadySent = true;
+      if (typeof api.ready === "function") api.ready();
+      if (typeof api.track === "function") api.track("game_loaded", platformState("loaded"));
+      if (typeof api.setState === "function") api.setState(platformState("loaded"));
+    }, 20);
+  }
+
+  function trackPlatform(eventName, props) {
+    if (!platformEmbedMode && !getPlatformApi()) return;
+    withPlatformApi(function (api) {
+      if (typeof api.track === "function") api.track(eventName, props || platformState(eventName));
+    }, 4);
+  }
+
+  function setPlatformState(reason) {
+    if (!platformEmbedMode && !getPlatformApi()) return;
+    withPlatformApi(function (api) {
+      if (typeof api.setState === "function") api.setState(platformState(reason));
+    }, 4);
+  }
+
+  function submitPlatformScore(leaderboard, value, meta) {
+    if (!platformEmbedMode && !getPlatformApi()) return;
+    withPlatformApi(function (api) {
+      if (typeof api.submitScore === "function") {
+        api.submitScore(leaderboard, value, { meta: meta || platformState("score") });
+      }
+    }, 4);
   }
 
   function makeGrid() {
@@ -388,24 +532,54 @@
   }
 
   function moveDelay(player) {
-    return Math.max(74, 165 - (player.speed - 1) * 22);
+    return Math.max(MIN_MOVE_DELAY, 165 - (player.speed - 1) * 20);
   }
 
   function tryMove(player, dx, dy) {
-    if (!player.alive || state.ended || state.paused) return;
+    if (!player.alive || state.ended || state.paused) return false;
     setPlayerFace(player, dx, dy);
     var nx = player.x + dx;
     var ny = player.y + dy;
-    if (!isWalkable(nx, ny, player)) return;
+    if (!isWalkable(nx, ny, player)) return false;
     beginStepAnimation(player, nx, ny);
     player.x = nx;
     player.y = ny;
     collectItem(player);
     if (isBlasted(nx, ny)) killPlayer(player);
+    return true;
   }
 
   function setPlayerFace(player, dx, dy) {
     if (dx || dy) player.face = { x: dx, y: dy };
+  }
+
+  function sameDir(a, b) {
+    return Boolean(a && b && a.x === b.x && a.y === b.y);
+  }
+
+  function copyDir(dir) {
+    return dir ? { x: dir.x, y: dir.y } : null;
+  }
+
+  function rememberMoveInput(player, dir) {
+    if (!dir) return;
+    if (!sameDir(player.moveBuffer, dir)) {
+      player.moveBuffer = copyDir(dir);
+    }
+    player.moveBufferTimer = INPUT_BUFFER_TIME;
+  }
+
+  function bufferedMoveInput(player) {
+    return player.moveBufferTimer > 0 ? player.moveBuffer : null;
+  }
+
+  function tryMoveWithFallback(player, primary, secondary) {
+    if (!primary) return false;
+    if (tryMove(player, primary.x, primary.y)) return true;
+    if (secondary && !sameDir(primary, secondary)) {
+      return tryMove(player, secondary.x, secondary.y);
+    }
+    return false;
   }
 
   function beginStepAnimation(player, tx, ty) {
@@ -413,7 +587,7 @@
     player.moveFromY = player.visualY;
     player.moveToX = tx;
     player.moveToY = ty;
-    player.moveAnimTotal = Math.max(90, Math.min(165, moveDelay(player)));
+    player.moveAnimTotal = Math.max(68, Math.min(165, moveDelay(player) + 8));
     player.moveAnim = player.moveAnimTotal;
     player.walkCycle += 1;
   }
@@ -436,7 +610,7 @@
   }
 
   function placeBomb(player) {
-    if (!player.alive || state.ended || state.paused) return;
+    if (gamePhase !== "playing" || !player.alive || state.ended || state.paused) return;
     if (player.bombsActive >= player.maxBombs || hasBombAt(player.x, player.y)) return;
     state.bombs.push({
       x: player.x,
@@ -518,9 +692,69 @@
 
   function killPlayer(player, deferRoundCheck) {
     if (!player.alive) return;
+    addHitFeedback(player);
     player.alive = false;
     flash(player.name + " is out");
     if (!deferRoundCheck) checkRoundEnd();
+  }
+
+  function addHitFeedback(player) {
+    var effect = {
+      x: player.visualX,
+      y: player.visualY,
+      color: player.style.top,
+      accent: player.style.accent,
+      timer: HIT_EFFECT_TIME,
+      duration: HIT_EFFECT_TIME,
+      particles: []
+    };
+    for (var i = 0; i < 10; i += 1) {
+      var angle = (Math.PI * 2 * i) / 10 + Math.random() * 0.36;
+      effect.particles.push({
+        x: 0,
+        y: -10,
+        vx: Math.cos(angle) * (22 + Math.random() * 20),
+        vy: Math.sin(angle) * (16 + Math.random() * 18) - 16,
+        size: 3 + Math.random() * 3,
+        color: i % 2 === 0 ? player.style.top : player.style.accent
+      });
+    }
+    state.hitEffects.push(effect);
+    if (player.id === 0) {
+      state.screenHitTimer = SCREEN_HIT_TIME;
+      pulseBoardHit();
+    }
+  }
+
+  function pulseBoardHit() {
+    if (!boardWrap) return;
+    boardWrap.classList.remove("player-hit");
+    void boardWrap.offsetWidth;
+    boardWrap.classList.add("player-hit");
+    window.setTimeout(function () {
+      if (boardWrap) boardWrap.classList.remove("player-hit");
+    }, SCREEN_HIT_TIME);
+  }
+
+  function reportRoundResult(reason, winner) {
+    var survivedSeconds = Math.max(0, Math.floor((ROUND_TIME - state.timeLeft) / 1000));
+    var player = state.players[0];
+    var playerWon = Boolean(winner && winner.id === 0);
+    var result = state.resultText || (winner ? winner.name + " wins" : "Draw");
+    var meta = {
+      round: state.round,
+      difficulty: difficulty,
+      map: currentMap().id,
+      result: result,
+      winner: winner ? winner.name : "Draw",
+      playerWon: playerWon,
+      playerWins: player.wins,
+      survivedSeconds: survivedSeconds
+    };
+    trackPlatform("round_end", meta);
+    submitPlatformScore("survival_seconds", survivedSeconds, meta);
+    if (playerWon) submitPlatformScore("wins", player.wins, meta);
+    setPlatformState(reason || "round_end");
   }
 
   function checkRoundEnd() {
@@ -529,7 +763,7 @@
     });
     if (alive.length > 1 || state.ended) return;
     state.ended = true;
-    state.nextRoundAt = performance.now() + ROUND_DELAY;
+    state.nextRoundAt = 0;
     if (alive.length === 1) {
       alive[0].wins += 1;
       state.resultText = alive[0].name + " wins";
@@ -538,18 +772,27 @@
       state.resultText = "Draw";
       flash("Draw round");
     }
+    reportRoundResult("elimination", alive[0] || null);
+    showResultOverlay();
   }
 
   function endRoundByTime(now) {
     if (state.ended) return;
     state.timeLeft = 0;
     state.ended = true;
-    state.nextRoundAt = now + ROUND_DELAY;
+    state.nextRoundAt = 0;
     state.resultText = "Time Up - Draw";
     flash("Time up - draw");
+    reportRoundResult("time_up", null);
+    showResultOverlay();
   }
 
   function update(dt, now) {
+    updateHitFeedback(dt);
+    if (gamePhase !== "playing") {
+      updateUi();
+      return;
+    }
     if (state.paused && !state.ended) {
       updateResumeCountdown(dt);
       updateUi();
@@ -568,9 +811,6 @@
     updateBlasts(dt);
     checkBlastDamage();
     updatePlayerVisuals(dt);
-    if (state.ended && now >= state.nextRoundAt) {
-      state = makeGame(true, true, false);
-    }
     updateUi();
   }
 
@@ -589,6 +829,8 @@
     if (state.resumeCountdown === 0) {
       state.paused = false;
       syncPauseButtons();
+      trackPlatform("resume", platformState("resume"));
+      setPlatformState("resume");
     }
   }
 
@@ -610,14 +852,36 @@
   function updateHuman(dt) {
     var player = state.players[0];
     if (!player || !player.alive) return;
-    player.moveCooldown -= dt;
+    if (player.moveBufferTimer > 0) {
+      player.moveBufferTimer = Math.max(0, player.moveBufferTimer - dt);
+    }
     var dir = currentInputDir();
     if (dir) {
+      rememberMoveInput(player, dir);
       setPlayerFace(player, dir.x, dir.y);
-      if (player.moveCooldown <= 0) {
-        tryMove(player, dir.x, dir.y);
-        player.moveCooldown = moveDelay(player);
+    }
+    if (!dir) {
+      player.moveBuffer = null;
+      player.moveBufferTimer = 0;
+      player.moveCooldown = 0;
+      return;
+    }
+    player.moveCooldown -= dt;
+    var steps = 0;
+    while (player.moveCooldown <= 0 && steps < MAX_HUMAN_STEPS_PER_FRAME) {
+      var nextDir = currentInputDir() || bufferedMoveInput(player);
+      if (!nextDir) {
+        player.moveCooldown = 0;
+        break;
       }
+      var moved = tryMoveWithFallback(player, nextDir, currentSecondaryInputDir());
+      if (!moved) {
+        player.moveCooldown = Math.min(Math.max(player.moveCooldown, 0), 26);
+        break;
+      }
+      player.moveCooldown += moveDelay(player);
+      player.moveBufferTimer = 0;
+      steps += 1;
     }
   }
 
@@ -628,6 +892,10 @@
     if (keys.arrowleft || keys.a) return { x: -1, y: 0 };
     if (keys.arrowright || keys.d) return { x: 1, y: 0 };
     return null;
+  }
+
+  function currentSecondaryInputDir() {
+    return touchSecondaryDir;
   }
 
   function updateAI(dt) {
@@ -910,6 +1178,84 @@
     return minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
   }
 
+  function updateHitFeedback(dt) {
+    if (state.screenHitTimer > 0) {
+      state.screenHitTimer = Math.max(0, state.screenHitTimer - dt);
+    }
+    state.hitEffects.forEach(function (effect) {
+      effect.timer -= dt;
+      var elapsed = effect.duration - effect.timer;
+      effect.particles.forEach(function (particle) {
+        particle.x += particle.vx * dt / 1000;
+        particle.y += particle.vy * dt / 1000;
+        particle.vy += 120 * dt / 1000;
+      });
+      effect.ring = Math.min(1, elapsed / effect.duration);
+    });
+    state.hitEffects = state.hitEffects.filter(function (effect) {
+      return effect.timer > 0;
+    });
+  }
+
+  function setGameFlowContent(kicker, title, body, action) {
+    if (gameFlowKicker) gameFlowKicker.textContent = kicker;
+    if (gameFlowTitle) gameFlowTitle.textContent = title;
+    if (gameFlowBody) gameFlowBody.textContent = body;
+    if (gameFlowPrimary) gameFlowPrimary.textContent = action;
+  }
+
+  function showStartOverlay(kicker, body) {
+    gamePhase = "start";
+    state.paused = false;
+    state.resumeCountdown = 0;
+    keys = {};
+    resetJoystick();
+    setGameFlowContent(
+      kicker || "Ready",
+      "Round " + state.round,
+      body || currentDifficulty().label + " on " + currentMap().name + ". Survive 2 minutes or be the last one standing.",
+      "Start Battle"
+    );
+    if (gameFlowOverlay) gameFlowOverlay.hidden = false;
+    syncPauseButtons();
+    setPlatformState("ready");
+  }
+
+  function showResultOverlay() {
+    gamePhase = "result";
+    keys = {};
+    resetJoystick();
+    setGameFlowContent(
+      "Round " + state.round + " Complete",
+      state.resultText || "Round Over",
+      "Wins: You " + state.players[0].wins + " / Bolt " + state.players[1].wins + " / Mint " + state.players[2].wins + " / Gold " + state.players[3].wins,
+      "Next Round"
+    );
+    if (gameFlowOverlay) gameFlowOverlay.hidden = false;
+    syncPauseButtons();
+    setPlatformState("result");
+  }
+
+  function startGameFlow() {
+    if (gamePhase === "result") {
+      state = makeGame(true, true, false);
+    }
+    gamePhase = "playing";
+    state.paused = false;
+    state.resumeCountdown = 0;
+    keys = {};
+    resetJoystick();
+    if (gameFlowOverlay) gameFlowOverlay.hidden = true;
+    syncPauseButtons();
+    updateUi();
+    trackPlatform("round_start", platformState("round_start"));
+    setPlatformState("playing");
+  }
+
+  function isGameFlowOpen() {
+    return gameFlowOverlay && !gameFlowOverlay.hidden;
+  }
+
   function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawGrid();
@@ -917,6 +1263,8 @@
     drawBlasts();
     drawPlayers();
     if (state.ended || state.paused) drawOverlay();
+    drawHitFeedback();
+    drawScreenHitFeedback();
   }
 
   function drawGrid() {
@@ -1460,6 +1808,71 @@
     }
   }
 
+  function drawHitFeedback() {
+    if (!state.hitEffects.length) return;
+    state.hitEffects.forEach(function (effect) {
+      var progress = 1 - effect.timer / effect.duration;
+      var alpha = Math.max(0, effect.timer / effect.duration);
+      var px = effect.x * TILE + TILE / 2;
+      var py = effect.y * TILE + TILE / 2;
+
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.globalCompositeOperation = "lighter";
+
+      ctx.strokeStyle = "rgba(255, 246, 202, " + (0.72 * alpha) + ")";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(0, -10, 12 + progress * 34, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = "rgba(238, 86, 73, " + (0.7 * alpha) + ")";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(-25 - progress * 9, -26);
+      ctx.lineTo(25 + progress * 9, 16);
+      ctx.moveTo(23 + progress * 8, -24);
+      ctx.lineTo(-22 - progress * 8, 16);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(255, 255, 255, " + (0.62 * alpha) + ")";
+      ctx.beginPath();
+      ctx.ellipse(0, -12, 16 - progress * 4, 20 - progress * 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      effect.particles.forEach(function (particle) {
+        ctx.fillStyle = colorWithAlpha(particle.color, alpha);
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, particle.size * alpha, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      ctx.restore();
+    });
+  }
+
+  function drawScreenHitFeedback() {
+    if (state.screenHitTimer <= 0) return;
+    var alpha = state.screenHitTimer / SCREEN_HIT_TIME;
+    ctx.save();
+    ctx.fillStyle = "rgba(177, 38, 31, " + (0.12 * alpha) + ")";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "rgba(255, 94, 78, " + (0.52 * alpha) + ")";
+    ctx.lineWidth = 12 + 10 * alpha;
+    ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+    ctx.restore();
+  }
+
+  function colorWithAlpha(color, alpha) {
+    if (color.charAt(0) !== "#" || color.length !== 7) {
+      return color;
+    }
+    var r = parseInt(color.slice(1, 3), 16);
+    var g = parseInt(color.slice(3, 5), 16);
+    var b = parseInt(color.slice(5, 7), 16);
+    return "rgba(" + r + ", " + g + ", " + b + ", " + alpha + ")";
+  }
+
   function drawOverlay() {
     ctx.fillStyle = "rgba(10, 12, 14, 0.58)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1539,6 +1952,7 @@
         button.textContent = state.resumeCountdown > 0 ? "Cancel" : state.paused ? "Resume" : "Pause";
       }
       button.classList.toggle("active", state.paused);
+      button.disabled = gamePhase !== "playing";
     });
   }
 
@@ -1561,6 +1975,13 @@
   }
 
   function syncFullscreenButton() {
+    if (platformEmbedMode) {
+      fullscreenButtons.forEach(function (button) {
+        button.hidden = true;
+        button.classList.remove("active");
+      });
+      return;
+    }
     var available = canUseFullscreen();
     var active = Boolean(fullscreenElement());
     var label = active ? "Exit fullscreen" : "Enter fullscreen";
@@ -1628,6 +2049,7 @@
 
   function toggleFullscreen(event) {
     captureInput(event);
+    if (platformEmbedMode) return;
     if (!canUseFullscreen()) {
       flash("Fullscreen unavailable");
       syncFullscreenButton();
@@ -1641,7 +2063,7 @@
   }
 
   function togglePause() {
-    if (state.ended) return;
+    if (gamePhase !== "playing" || state.ended) return;
     if (!state.paused) {
       state.paused = true;
       state.resumeCountdown = 0;
@@ -1653,11 +2075,13 @@
       state.resumeCountdown = RESUME_COUNTDOWN_TIME;
     }
     syncPauseButtons();
+    trackPlatform(state.resumeCountdown > 0 ? "resume_countdown" : state.paused ? "pause" : "resume", platformState("pause_toggle"));
+    setPlatformState("pause_toggle");
   }
 
   function openSettings(event) {
     captureInput(event);
-    if (!state.ended && !state.paused) {
+    if (gamePhase === "playing" && !state.ended && !state.paused) {
       state.paused = true;
       state.resumeCountdown = 0;
       settingsResumeAfterClose = true;
@@ -1669,16 +2093,20 @@
     }
     if (settingsModal) settingsModal.hidden = false;
     syncPauseButtons();
+    trackPlatform("settings_open", platformState("settings_open"));
+    setPlatformState("settings_open");
   }
 
   function closeSettings(event) {
     if (event) event.preventDefault();
     if (settingsModal) settingsModal.hidden = true;
-    if (settingsResumeAfterClose && state.paused && !state.ended) {
+    if (settingsResumeAfterClose && gamePhase === "playing" && state.paused && !state.ended) {
       state.resumeCountdown = RESUME_COUNTDOWN_TIME;
     }
     settingsResumeAfterClose = false;
     syncPauseButtons();
+    trackPlatform("settings_close", platformState("settings_close"));
+    setPlatformState("settings_close");
   }
 
   function isSettingsOpen() {
@@ -1687,18 +2115,22 @@
 
   function pauseForInterruption() {
     if (performance.now() < fullscreenTransitionUntil) return;
-    if (state.ended || state.paused) return;
+    if (gamePhase !== "playing" || state.ended || state.paused) return;
     state.paused = true;
     state.resumeCountdown = 0;
     keys = {};
     resetJoystick();
     syncPauseButtons();
     updateUi();
+    trackPlatform("auto_pause", platformState("interruption"));
+    setPlatformState("interruption");
   }
 
   function resetRound() {
     state = makeGame(true, false, false);
+    showStartOverlay("Round Reset");
     closeSettings();
+    trackPlatform("round_reset", platformState("round_reset"));
   }
 
   function nextMap() {
@@ -1706,7 +2138,9 @@
     syncMapButtons();
     state = makeGame(false, false, true);
     flash(currentMap().name + " map");
+    showStartOverlay("New Map", "Now playing " + currentMap().name + " on " + currentDifficulty().label + ".");
     closeSettings();
+    trackPlatform("map_next", platformState("map_next"));
   }
 
   function selectMap(mapId) {
@@ -1718,7 +2152,9 @@
     syncMapButtons();
     state = makeGame(false, false, true);
     flash(currentMap().name + " map");
+    showStartOverlay("New Map", "Now playing " + currentMap().name + " on " + currentDifficulty().label + ".");
     closeSettings();
+    trackPlatform("map_select", platformState("map_select"));
   }
 
   function updateJoystick(event) {
@@ -1736,18 +2172,35 @@
     joystickKnob.style.setProperty("--stick-x", knobX + "px");
     joystickKnob.style.setProperty("--stick-y", knobY + "px");
 
-    if (distanceFromCenter < rect.width * 0.13) {
+    var deadzone = rect.width * JOYSTICK_DEADZONE;
+    var absX = Math.abs(dx);
+    var absY = Math.abs(dy);
+    if (distanceFromCenter < deadzone) {
       touchDir = null;
-    } else if (Math.abs(dx) > Math.abs(dy)) {
-      touchDir = { x: dx > 0 ? 1 : -1, y: 0 };
+      touchSecondaryDir = null;
     } else {
-      touchDir = { x: 0, y: dy > 0 ? 1 : -1 };
+      var primaryHorizontal;
+      if (touchDir && touchDir.x) {
+        primaryHorizontal = !(absY > absX * JOYSTICK_SWITCH_RATIO);
+      } else if (touchDir && touchDir.y) {
+        primaryHorizontal = absX > absY * JOYSTICK_SWITCH_RATIO;
+      } else {
+        primaryHorizontal = absX >= absY;
+      }
+      if (primaryHorizontal) {
+        touchDir = { x: dx > 0 ? 1 : -1, y: 0 };
+        touchSecondaryDir = absY > deadzone * 0.78 ? { x: 0, y: dy > 0 ? 1 : -1 } : null;
+      } else {
+        touchDir = { x: 0, y: dy > 0 ? 1 : -1 };
+        touchSecondaryDir = absX > deadzone * 0.78 ? { x: dx > 0 ? 1 : -1, y: 0 } : null;
+      }
     }
     event.preventDefault();
   }
 
   function resetJoystick() {
     touchDir = null;
+    touchSecondaryDir = null;
     joystickPointer = null;
     if (joystick) joystick.classList.remove("active");
     if (joystickKnob) {
@@ -1774,11 +2227,90 @@
     togglePause();
   }
 
+  function restartGame(reason) {
+    state = makeGame(false, false, true);
+    showStartOverlay(reason || "Restarted", currentDifficulty().label + " on " + currentMap().name + ". Survive 2 minutes or be the last one standing.");
+    closeSettings();
+    trackPlatform("game_restart", platformState("game_restart"));
+    updateUi();
+  }
+
+  function setDifficulty(nextDifficulty) {
+    if (!difficultySettings[nextDifficulty]) return false;
+    difficulty = nextDifficulty;
+    syncDifficultyButtons();
+    state = makeGame(false, false, true);
+    flash(currentDifficulty().label + " difficulty");
+    showStartOverlay("Difficulty Set", currentDifficulty().label + " on " + currentMap().name + ".");
+    closeSettings();
+    trackPlatform("difficulty_select", platformState("difficulty_select"));
+    return true;
+  }
+
+  function resumeWithCountdown() {
+    if (gamePhase !== "playing" || state.ended || !state.paused) return false;
+    state.resumeCountdown = RESUME_COUNTDOWN_TIME;
+    syncPauseButtons();
+    trackPlatform("resume_countdown", platformState("resume_countdown"));
+    setPlatformState("resume_countdown");
+    return true;
+  }
+
+  function exposeHostApi() {
+    window.BubbleBattle = Object.freeze({
+      start: function () {
+        startGameFlow();
+      },
+      restart: function () {
+        restartGame("Restarted");
+      },
+      pause: function () {
+        if (gamePhase === "playing" && !state.ended && !state.paused) togglePause();
+      },
+      resume: resumeWithCountdown,
+      setDifficulty: setDifficulty,
+      setMap: function (mapId) {
+        selectMap(mapId);
+      },
+      getState: function () {
+        return platformState("external");
+      }
+    });
+  }
+
+  function handleHostMessage(event) {
+    if (!platformEmbedMode || !event.data || typeof event.data !== "object") return;
+    var type = event.data.type;
+    if (type === "bubble-battle:start") {
+      startGameFlow();
+    } else if (type === "bubble-battle:restart" || type === "aigameshare:restart") {
+      restartGame("Restarted");
+    } else if (type === "bubble-battle:pause") {
+      if (gamePhase === "playing" && !state.ended && !state.paused) togglePause();
+    } else if (type === "bubble-battle:resume") {
+      resumeWithCountdown();
+    }
+  }
+
   document.addEventListener("keydown", function (event) {
     var key = event.key.toLowerCase();
     if (isSettingsOpen()) {
       if (key === "escape") closeSettings(event);
       if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "spacebar", "enter", "r", "p"].indexOf(key) !== -1) {
+        event.preventDefault();
+      }
+      return;
+    }
+    if (isGameFlowOpen()) {
+      if (key === "enter" || key === " " || key === "spacebar") {
+        startGameFlow();
+        event.preventDefault();
+      }
+      if (key === "r") {
+        resetRound();
+        event.preventDefault();
+      }
+      if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "spacebar", "enter"].indexOf(key) !== -1) {
         event.preventDefault();
       }
       return;
@@ -1790,6 +2322,7 @@
     }
     if (key === "r") {
       state = makeGame(true, false, false);
+      showStartOverlay("Round Reset");
     }
     if (key === "p" && !event.repeat) {
       togglePause();
@@ -1823,6 +2356,7 @@
   });
 
   window.addEventListener("blur", pauseForInterruption);
+  window.addEventListener("message", handleHostMessage);
 
   ["contextmenu", "selectstart", "dragstart", "gesturestart"].forEach(function (eventName) {
     document.addEventListener(eventName, function (event) {
@@ -1852,11 +2386,7 @@
 
   difficultyButtons.forEach(function (button) {
     button.addEventListener("click", function () {
-      difficulty = button.getAttribute("data-difficulty");
-      syncDifficultyButtons();
-      state = makeGame(false, false, true);
-      flash(currentDifficulty().label + " difficulty");
-      closeSettings();
+      setDifficulty(button.getAttribute("data-difficulty"));
     });
   });
 
@@ -1936,9 +2466,20 @@
     });
   }
 
+  if (gameFlowPrimary) {
+    gameFlowPrimary.addEventListener("click", function (event) {
+      event.preventDefault();
+      startGameFlow();
+    });
+  }
+
+  exposeHostApi();
+  showStartOverlay();
   updateUi();
   syncDifficultyButtons();
   syncMapButtons();
   syncFullscreenButton();
+  loadPlatformSdk();
+  announcePlatformReady();
   requestAnimationFrame(frame);
 }());
