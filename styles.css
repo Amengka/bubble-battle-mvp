@@ -151,6 +151,12 @@ h2 {
   padding: 0 14px;
 }
 
+.desktop-fullscreen.active {
+  border-color: rgba(101, 186, 208, 0.58);
+  background: #243d47;
+  color: #dff7ff;
+}
+
 .mobile-utility-actions {
   display: none;
 }
