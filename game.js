@@ -38,7 +38,7 @@
   var joystickKnob = document.getElementById("joystickKnob");
   var bombButton = document.querySelector("[data-bomb]");
   var pauseButtons = document.querySelectorAll("[data-pause]");
-  var fullscreenButton = document.querySelector("[data-fullscreen]");
+  var fullscreenButtons = document.querySelectorAll("[data-fullscreen]");
   var settingsModal = document.getElementById("settingsModal");
   var settingsButtons = document.querySelectorAll("[data-settings]");
   var settingsCloseButtons = document.querySelectorAll("[data-settings-close]");
@@ -1561,15 +1561,19 @@
   }
 
   function syncFullscreenButton() {
-    if (!fullscreenButton) return;
     var available = canUseFullscreen();
-    fullscreenButton.hidden = !available;
-    if (!available) return;
     var active = Boolean(fullscreenElement());
     var label = active ? "Exit fullscreen" : "Enter fullscreen";
-    fullscreenButton.classList.toggle("active", active);
-    fullscreenButton.setAttribute("aria-label", label);
-    fullscreenButton.title = label;
+    fullscreenButtons.forEach(function (button) {
+      button.hidden = !available;
+      if (!available) return;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-label", label);
+      button.title = label;
+      if (!button.classList.contains("mobile-fullscreen")) {
+        button.textContent = active ? "Exit Fullscreen" : "Fullscreen";
+      }
+    });
   }
 
   function requestAppFullscreen() {
@@ -1870,13 +1874,13 @@
     });
   });
 
-  if (fullscreenButton) {
-    fullscreenButton.addEventListener("pointerdown", toggleFullscreen);
-    fullscreenButton.addEventListener("click", function (event) {
+  fullscreenButtons.forEach(function (button) {
+    button.addEventListener("pointerdown", toggleFullscreen);
+    button.addEventListener("click", function (event) {
       event.preventDefault();
       if (event.detail === 0) toggleFullscreen(event);
     });
-  }
+  });
 
   settingsButtons.forEach(function (button) {
     button.addEventListener("pointerdown", openSettings);
