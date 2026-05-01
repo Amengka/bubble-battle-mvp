@@ -65,6 +65,10 @@
   var settingsCloseButtons = document.querySelectorAll("[data-settings-close]");
   var resetRoundButtons = document.querySelectorAll("[data-reset-round]");
   var nextMapButtons = document.querySelectorAll("[data-next-map]");
+  var soundButtons = document.querySelectorAll("[data-sound]");
+  var vibrationButtons = document.querySelectorAll("[data-vibration]");
+  var vibrationSettingRows = document.querySelectorAll("[data-vibration-setting]");
+  var blastGuideButtons = document.querySelectorAll("[data-blast-guide]");
   var gameScript = document.currentScript || document.querySelector("script[src$='game.js']");
 
   var platformEmbedMode = detectPlatformEmbedMode();
@@ -84,6 +88,10 @@
   var lastFrame = performance.now();
   var difficulty = "easy";
   var mapIndex = 0;
+  var soundEnabled = true;
+  var vibrationAvailable = canUseVibration();
+  var vibrationEnabled = vibrationAvailable;
+  var blastGuideEnabled = false;
   document.documentElement.classList.toggle("is-platform-embed", platformEmbedMode);
   if (appShell) appShell.classList.toggle("is-platform-embed", platformEmbedMode);
 
@@ -307,12 +315,14 @@
       deathChoiceOpen: false,
       deathChoicePending: false,
       deathChoiceShown: false,
+      lastDeathCause: "",
       overloadWarningShown: false,
       overloadStage: 0,
       resumeCountdown: 0,
       timeLeft: ROUND_TIME,
       nextRoundAt: 0,
       resultText: "",
+      stats: makeRoundStats(),
       players: [
         makePlayer(0, "You", starts[0], characterStyles[0], false, keepScores ? oldPlayers[0] : null, settings.playerStart),
         makePlayer(1, "Bolt", starts[1], characterStyles[1], true, keepScores ? oldPlayers[1] : null, settings.aiStart),
@@ -362,6 +372,16 @@
     };
   }
 
+  function makeRoundStats() {
+    return {
+      bombsPlaced: 0,
+      itemsCollected: 0,
+      kills: 0,
+      deathCause: "",
+      survivedSeconds: 0
+    };
+  }
+
   function currentDifficulty() {
     return difficultySettings[difficulty];
   }
@@ -371,6 +391,7 @@
   }
 
   function getAudioContext() {
+    if (!soundEnabled) return null;
     var AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) return null;
     if (!audioContext) audioContext = new AudioCtx();
@@ -539,6 +560,15 @@
     });
   }
 
+  function vibrate(pattern) {
+    if (!vibrationAvailable || !vibrationEnabled || !navigator.vibrate) return;
+    try {
+      navigator.vibrate(pattern);
+    } catch (error) {
+      return;
+    }
+  }
+
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
   }
@@ -569,6 +599,16 @@
       queryFlag("embed") ||
       queryFlag("aigameshare") ||
       queryValue("platform").toLowerCase() === "aigameshare";
+  }
+
+  function canUseVibration() {
+    var coarsePointer = false;
+    try {
+      coarsePointer = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    } catch (error) {
+      coarsePointer = false;
+    }
+    return Boolean(coarsePointer && navigator.vibrate);
   }
 
   function randomAiCooldown() {
@@ -630,7 +670,13 @@
       paused: Boolean(state && state.paused),
       spectating: Boolean(state && state.spectating),
       deathChoiceOpen: Boolean(state && state.deathChoiceOpen),
+      soundEnabled: soundEnabled,
+      vibrationEnabled: vibrationEnabled,
+      blastGuideEnabled: blastGuideEnabled,
       playerWins: player ? player.wins : 0,
+      bombsPlaced: state && state.stats ? state.stats.bombsPlaced : 0,
+      itemsCollected: state && state.stats ? state.stats.itemsCollected : 0,
+      kills: state && state.stats ? state.stats.kills : 0,
       result: state && state.resultText ? state.resultText : ""
     };
   }
@@ -811,18 +857,21 @@
       player.baseFire = Math.min(6, player.baseFire + 1);
       setTile(player.x, player.y, "floor");
       playPickupSound("fire");
+      if (player.id === 0) state.stats.itemsCollected += 1;
       flash(player.name + " got Fire Up");
     } else if (tile === "item-bomb") {
       player.maxBombs = Math.min(5, player.maxBombs + 1);
       player.baseMaxBombs = Math.min(5, player.baseMaxBombs + 1);
       setTile(player.x, player.y, "floor");
       playPickupSound("bomb");
+      if (player.id === 0) state.stats.itemsCollected += 1;
       flash(player.name + " got Bomb Up");
     } else if (tile === "item-speed") {
       player.speed = Math.min(5, player.speed + 1);
       player.baseSpeed = Math.min(5, player.baseSpeed + 1);
       setTile(player.x, player.y, "floor");
       playPickupSound("speed");
+      if (player.id === 0) state.stats.itemsCollected += 1;
       flash(player.name + " got Speed Up");
     }
   }
@@ -840,6 +889,10 @@
     });
     player.bombsActive += 1;
     playBombSetSound();
+    if (player.id === 0) {
+      state.stats.bombsPlaced += 1;
+      vibrate(18);
+    }
   }
 
   function explodeBomb(bomb) {
@@ -887,7 +940,7 @@
 
     state.blasts.push({ cells: cells, timer: BLAST_TIME, damageTimer: BLAST_DAMAGE_TIME });
     hits.forEach(function (hit) {
-      killPlayer(hit, true);
+      killPlayer(hit, true, bomb.owner);
     });
     if (hits.length) checkRoundEnd();
     maybeShowDeathChoice();
@@ -914,17 +967,31 @@
     });
   }
 
-  function killPlayer(player, deferRoundCheck) {
+  function killPlayer(player, deferRoundCheck, killerId) {
     if (!player.alive) return;
     addHitFeedback(player);
     playKillSound(player.id === 0);
+    vibrate(player.id === 0 ? [80, 40, 120] : 28);
     player.alive = false;
     flash(player.name + " is out");
-    if (player.id === 0) state.deathChoicePending = true;
+    if (killerId === 0 && player.id !== 0) state.stats.kills += 1;
+    if (player.id === 0) {
+      state.deathChoicePending = true;
+      state.stats.deathCause = deathCauseText(killerId);
+      state.lastDeathCause = state.stats.deathCause;
+    }
     if (!deferRoundCheck) {
       checkRoundEnd();
       maybeShowDeathChoice();
     }
+  }
+
+  function deathCauseText(killerId) {
+    if (killerId === undefined || killerId === null) return "Blast";
+    var killer = state.players[killerId];
+    if (!killer) return "Blast";
+    if (killer.id === 0) return "Your own bomb";
+    return killer.name + "'s bomb";
   }
 
   function addHitFeedback(player) {
@@ -965,8 +1032,20 @@
     }, SCREEN_HIT_TIME);
   }
 
+  function pulseBoardOverload(maxed) {
+    if (!boardWrap) return;
+    var className = maxed ? "overload-max" : "overload-pulse";
+    boardWrap.classList.remove("overload-pulse", "overload-max");
+    void boardWrap.offsetWidth;
+    boardWrap.classList.add(className);
+    window.setTimeout(function () {
+      if (boardWrap) boardWrap.classList.remove(className);
+    }, maxed ? 760 : 560);
+  }
+
   function reportRoundResult(reason, winner) {
     var survivedSeconds = Math.max(0, Math.floor((ROUND_TIME - state.timeLeft) / 1000));
+    state.stats.survivedSeconds = survivedSeconds;
     var player = state.players[0];
     var playerWon = Boolean(winner && winner.id === 0);
     var result = state.resultText || (winner ? winner.name + " wins" : "Draw");
@@ -978,7 +1057,11 @@
       winner: winner ? winner.name : "Draw",
       playerWon: playerWon,
       playerWins: player.wins,
-      survivedSeconds: survivedSeconds
+      survivedSeconds: survivedSeconds,
+      bombsPlaced: state.stats.bombsPlaced,
+      itemsCollected: state.stats.itemsCollected,
+      kills: state.stats.kills,
+      deathCause: state.stats.deathCause
     };
     trackPlatform("round_end", meta);
     submitPlatformScore("survival_seconds", survivedSeconds, meta);
@@ -1061,6 +1144,8 @@
       state.overloadWarningShown = true;
       flash("Hurry Up");
       playHurrySound();
+      pulseBoardOverload(false);
+      vibrate([40, 30, 40]);
       trackPlatform("overload_warning", platformState("overload_warning"));
     }
     overloadStages.forEach(function (stage) {
@@ -1080,6 +1165,8 @@
     });
     flash(stage.label + " +" + stage.buffs.bombs + " Bomb +" + stage.buffs.fire + " Fire +" + stage.buffs.speed + " Speed");
     playOverloadSound(stage.id);
+    pulseBoardOverload(stage.id > 1);
+    vibrate(stage.id > 1 ? [60, 30, 90, 30, 120] : [50, 30, 70]);
     trackPlatform("overload_stage_" + stage.id, platformState("overload_stage_" + stage.id));
     setPlatformState("overload");
   }
@@ -1453,7 +1540,7 @@
       return player.alive && isBlasted(player.x, player.y);
     });
     hits.forEach(function (player) {
-      killPlayer(player, true);
+      killPlayer(player, true, null);
     });
     if (hits.length) checkRoundEnd();
     maybeShowDeathChoice();
@@ -1564,12 +1651,18 @@
     setGameFlowContent(
       "Round " + state.round + " Complete",
       state.resultText || "Round Over",
-      "Wins: You " + state.players[0].wins + " / Bolt " + state.players[1].wins + " / Mint " + state.players[2].wins + " / Gold " + state.players[3].wins,
+      resultSummaryText(),
       "Next Round"
     );
     if (gameFlowOverlay) gameFlowOverlay.hidden = false;
     syncPauseButtons();
     setPlatformState("result");
+  }
+
+  function resultSummaryText() {
+    var stats = state.stats || makeRoundStats();
+    var death = stats.deathCause ? " / Cause: " + stats.deathCause : "";
+    return "Survived " + stats.survivedSeconds + "s / KOs " + stats.kills + " / Items " + stats.itemsCollected + " / Bombs " + stats.bombsPlaced + death + ". Wins: You " + state.players[0].wins + " / Bolt " + state.players[1].wins + " / Mint " + state.players[2].wins + " / Gold " + state.players[3].wins;
   }
 
   function maybeShowDeathChoice() {
@@ -1643,9 +1736,11 @@
   function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawGrid();
+    drawBlastGuides();
     drawBombs();
     drawBlasts();
     drawPlayers();
+    drawOverloadHud();
     if (state.ended || state.paused) drawOverlay();
     drawHitFeedback();
     drawScreenHitFeedback();
@@ -1837,6 +1932,24 @@
       ctx.stroke();
       ctx.fillStyle = "#f4d45d";
       ctx.fillRect(px + 10, py - 22, 8, 8);
+    });
+  }
+
+  function drawBlastGuides() {
+    if (!blastGuideEnabled || gamePhase !== "playing" || state.ended) return;
+    state.bombs.forEach(function (bomb) {
+      if (bomb.exploded || bomb.timer > 700) return;
+      var alpha = 0.1 + (700 - bomb.timer) / 700 * 0.22;
+      var cells = bombBlastCells(bomb);
+      cells.forEach(function (cell) {
+        var px = cell.x * TILE;
+        var py = cell.y * TILE;
+        ctx.fillStyle = "rgba(88, 190, 224, " + (alpha * 0.78) + ")";
+        ctx.fillRect(px + 7, py + 7, TILE - 14, TILE - 14);
+        ctx.strokeStyle = "rgba(151, 230, 255, " + (alpha + 0.1) + ")";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(px + 10, py + 10, TILE - 20, TILE - 20);
+      });
     });
   }
 
@@ -2247,6 +2360,23 @@
     ctx.restore();
   }
 
+  function drawOverloadHud() {
+    if (gamePhase !== "playing" || state.ended || state.overloadStage <= 0) return;
+    var alpha = state.overloadStage > 1 ? 0.18 : 0.1;
+    ctx.save();
+    ctx.fillStyle = "rgba(229, 184, 76, " + alpha + ")";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = state.overloadStage > 1 ? "rgba(255, 120, 82, 0.62)" : "rgba(229, 184, 76, 0.5)";
+    ctx.lineWidth = state.overloadStage > 1 ? 10 : 7;
+    ctx.strokeRect(6, 6, canvas.width - 12, canvas.height - 12);
+    ctx.fillStyle = state.overloadStage > 1 ? "#ffb18d" : "#fff2a8";
+    ctx.font = "bold 20px sans-serif";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    ctx.fillText(state.overloadStage > 1 ? "MAX OVERLOAD" : "OVERLOAD", canvas.width - 16, 14);
+    ctx.restore();
+  }
+
   function colorWithAlpha(color, alpha) {
     if (color.charAt(0) !== "#" || color.length !== 7) {
       return color;
@@ -2313,6 +2443,22 @@
   function syncDifficultyButtons() {
     difficultyButtons.forEach(function (button) {
       button.classList.toggle("active", button.getAttribute("data-difficulty") === difficulty);
+    });
+  }
+
+  function syncOptionButtons() {
+    soundButtons.forEach(function (button) {
+      button.classList.toggle("active", (button.getAttribute("data-sound") === "on") === soundEnabled);
+    });
+    vibrationSettingRows.forEach(function (row) {
+      row.hidden = !vibrationAvailable;
+    });
+    vibrationButtons.forEach(function (button) {
+      button.disabled = !vibrationAvailable;
+      button.classList.toggle("active", (button.getAttribute("data-vibration") === "on") === vibrationEnabled);
+    });
+    blastGuideButtons.forEach(function (button) {
+      button.classList.toggle("active", (button.getAttribute("data-blast-guide") === "on") === blastGuideEnabled);
     });
   }
 
@@ -2491,6 +2637,7 @@
 
   function closeSettings(event) {
     if (event) event.preventDefault();
+    if (!settingsModal || settingsModal.hidden) return;
     playButtonSound();
     if (settingsModal) settingsModal.hidden = true;
     if (settingsResumeAfterClose && gamePhase === "playing" && state.paused && !state.ended) {
@@ -2682,6 +2829,33 @@
     closeSettings();
     trackPlatform("difficulty_select", platformState("difficulty_select"));
     return true;
+  }
+
+  function setSoundEnabled(value) {
+    soundEnabled = value;
+    if (!soundEnabled && audioContext && audioContext.state === "running") {
+      audioContext.suspend();
+    } else if (soundEnabled) {
+      unlockAudio();
+      playButtonSound();
+    }
+    syncOptionButtons();
+    trackPlatform("sound_toggle", platformState("sound_toggle"));
+  }
+
+  function setVibrationEnabled(value) {
+    if (!vibrationAvailable) return;
+    vibrationEnabled = value;
+    if (vibrationEnabled) vibrate(25);
+    syncOptionButtons();
+    trackPlatform("vibration_toggle", platformState("vibration_toggle"));
+  }
+
+  function setBlastGuideEnabled(value) {
+    blastGuideEnabled = value;
+    syncOptionButtons();
+    flash(value ? "Blast Guide On" : "Blast Guide Off");
+    trackPlatform("blast_guide_toggle", platformState("blast_guide_toggle"));
   }
 
   function resumeWithCountdown() {
@@ -2894,6 +3068,24 @@
     button.addEventListener("click", nextMap);
   });
 
+  soundButtons.forEach(function (button) {
+    button.addEventListener("click", function () {
+      setSoundEnabled(button.getAttribute("data-sound") === "on");
+    });
+  });
+
+  vibrationButtons.forEach(function (button) {
+    button.addEventListener("click", function () {
+      setVibrationEnabled(button.getAttribute("data-vibration") === "on");
+    });
+  });
+
+  blastGuideButtons.forEach(function (button) {
+    button.addEventListener("click", function () {
+      setBlastGuideEnabled(button.getAttribute("data-blast-guide") === "on");
+    });
+  });
+
   if (deathRestartBtn) {
     deathRestartBtn.addEventListener("pointerdown", restartAfterDeath);
     deathRestartBtn.addEventListener("click", function (event) {
@@ -2957,6 +3149,7 @@
   updateUi();
   syncDifficultyButtons();
   syncMapButtons();
+  syncOptionButtons();
   syncFullscreenButton();
   loadPlatformSdk();
   announcePlatformReady();
