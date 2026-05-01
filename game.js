@@ -15,6 +15,7 @@
 
   var canvas = document.getElementById("gameCanvas");
   var ctx = canvas.getContext("2d");
+  var appShell = document.querySelector(".app-shell");
   var roundStatus = document.getElementById("roundStatus");
   var roundTimer = document.getElementById("roundTimer");
   var hudTimer = document.getElementById("hudTimer");
@@ -37,6 +38,7 @@
   var joystickKnob = document.getElementById("joystickKnob");
   var bombButton = document.querySelector("[data-bomb]");
   var pauseButtons = document.querySelectorAll("[data-pause]");
+  var fullscreenButton = document.querySelector("[data-fullscreen]");
   var settingsModal = document.getElementById("settingsModal");
   var settingsButtons = document.querySelectorAll("[data-settings]");
   var settingsCloseButtons = document.querySelectorAll("[data-settings-close]");
@@ -47,6 +49,7 @@
   var touchDir = null;
   var joystickPointer = null;
   var settingsResumeAfterClose = false;
+  var fullscreenTransitionUntil = 0;
   var toastTimer = 0;
   var lastFrame = performance.now();
   var difficulty = "easy";
@@ -1539,6 +1542,100 @@
     });
   }
 
+  function fullscreenElement() {
+    return document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement ||
+      null;
+  }
+
+  function canUseFullscreen() {
+    var target = appShell || document.documentElement;
+    return Boolean(target && (
+      target.requestFullscreen ||
+      target.webkitRequestFullscreen ||
+      target.mozRequestFullScreen ||
+      target.msRequestFullscreen
+    ));
+  }
+
+  function syncFullscreenButton() {
+    if (!fullscreenButton) return;
+    var available = canUseFullscreen();
+    fullscreenButton.hidden = !available;
+    if (!available) return;
+    var active = Boolean(fullscreenElement());
+    var label = active ? "Exit fullscreen" : "Enter fullscreen";
+    fullscreenButton.classList.toggle("active", active);
+    fullscreenButton.setAttribute("aria-label", label);
+    fullscreenButton.title = label;
+  }
+
+  function requestAppFullscreen() {
+    var target = appShell || document.documentElement;
+    if (!target) return;
+    fullscreenTransitionUntil = performance.now() + 900;
+    try {
+      var result;
+      if (target.requestFullscreen) {
+        result = target.requestFullscreen({ navigationUI: "hide" });
+      } else if (target.webkitRequestFullscreen) {
+        result = target.webkitRequestFullscreen();
+      } else if (target.mozRequestFullScreen) {
+        result = target.mozRequestFullScreen();
+      } else if (target.msRequestFullscreen) {
+        result = target.msRequestFullscreen();
+      }
+      if (result && typeof result.catch === "function") {
+        result.catch(function () {
+          flash("Fullscreen unavailable");
+          syncFullscreenButton();
+        });
+      }
+    } catch (error) {
+      flash("Fullscreen unavailable");
+      syncFullscreenButton();
+    }
+  }
+
+  function exitAppFullscreen() {
+    fullscreenTransitionUntil = performance.now() + 900;
+    try {
+      var result;
+      if (document.exitFullscreen) {
+        result = document.exitFullscreen();
+      } else if (document.webkitExitFullscreen) {
+        result = document.webkitExitFullscreen();
+      } else if (document.mozCancelFullScreen) {
+        result = document.mozCancelFullScreen();
+      } else if (document.msExitFullscreen) {
+        result = document.msExitFullscreen();
+      }
+      if (result && typeof result.catch === "function") {
+        result.catch(function () {
+          syncFullscreenButton();
+        });
+      }
+    } catch (error) {
+      syncFullscreenButton();
+    }
+  }
+
+  function toggleFullscreen(event) {
+    captureInput(event);
+    if (!canUseFullscreen()) {
+      flash("Fullscreen unavailable");
+      syncFullscreenButton();
+      return;
+    }
+    if (fullscreenElement()) {
+      exitAppFullscreen();
+    } else {
+      requestAppFullscreen();
+    }
+  }
+
   function togglePause() {
     if (state.ended) return;
     if (!state.paused) {
@@ -1585,6 +1682,7 @@
   }
 
   function pauseForInterruption() {
+    if (performance.now() < fullscreenTransitionUntil) return;
     if (state.ended || state.paused) return;
     state.paused = true;
     state.resumeCountdown = 0;
@@ -1709,6 +1807,17 @@
     if (document.hidden) pauseForInterruption();
   });
 
+  ["fullscreenchange", "webkitfullscreenchange", "mozfullscreenchange", "MSFullscreenChange"].forEach(function (eventName) {
+    document.addEventListener(eventName, syncFullscreenButton);
+  });
+
+  ["fullscreenerror", "webkitfullscreenerror", "mozfullscreenerror", "MSFullscreenError"].forEach(function (eventName) {
+    document.addEventListener(eventName, function () {
+      flash("Fullscreen unavailable");
+      syncFullscreenButton();
+    });
+  });
+
   window.addEventListener("blur", pauseForInterruption);
 
   ["contextmenu", "selectstart", "dragstart", "gesturestart"].forEach(function (eventName) {
@@ -1760,6 +1869,14 @@
       if (event.detail === 0) togglePause();
     });
   });
+
+  if (fullscreenButton) {
+    fullscreenButton.addEventListener("pointerdown", toggleFullscreen);
+    fullscreenButton.addEventListener("click", function (event) {
+      event.preventDefault();
+      if (event.detail === 0) toggleFullscreen(event);
+    });
+  }
 
   settingsButtons.forEach(function (button) {
     button.addEventListener("pointerdown", openSettings);
@@ -1818,5 +1935,6 @@
   updateUi();
   syncDifficultyButtons();
   syncMapButtons();
+  syncFullscreenButton();
   requestAnimationFrame(frame);
 }());

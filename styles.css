@@ -465,6 +465,12 @@ dd {
   line-height: 1;
 }
 
+.mobile-fullscreen.active {
+  border-color: rgba(101, 186, 208, 0.58);
+  background: #243d47;
+  color: #dff7ff;
+}
+
 .mobile-pause.active {
   border-color: rgba(229, 184, 76, 0.62);
   background: #4a3f26;
