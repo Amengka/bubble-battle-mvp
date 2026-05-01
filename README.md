@@ -14,10 +14,12 @@ A small browser-based Bomberman-like prototype.
 - Direction-aware pseudo-3D character rendering with smooth movement and walk frames
 - Round win tracking and quick restart
 - 90-second arcade round timer; time-up rounds are draws
-- Late-round Overload buffs at 30s and 15s to speed up decisive finishes
+- Late-round Overload buffs at 45s and 20s to speed up decisive finishes
 - Mobile HUD keeps time and player stats above the board
 - Portrait 9:16-friendly mobile shell with compact HUD and top-corner game controls
-- In-game Settings panel for difficulty, map, restart, and next map
+- In-game Settings panel for difficulty, map, assist options, restart, and next map
+- Optional Blast Guide assist defaults to off on every difficulty
+- Sound toggle and supported-device vibration toggle for mobile-friendly feedback
 - Keyboard and multi-touch joystick controls with 3-second resume countdown
 - Fixed mobile viewport with selection, long-press menu, and page scroll guards
 

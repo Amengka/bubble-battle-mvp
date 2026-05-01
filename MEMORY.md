@@ -146,9 +146,16 @@ reconstructing decisions from the chat history.
   - pause resume countdown
   - Hurry Up / Overload
   - key buttons
+- Sound can be toggled in Settings.
+- Vibration feedback is hidden unless the browser supports vibration on a coarse-pointer device.
+- Overload has extra visual feedback:
+  - board pulse
+  - canvas edge glow
+  - `OVERLOAD` / `MAX OVERLOAD` HUD marker
 - The local player's death can pause the round and open a choice overlay:
   - Restart starts the current round again.
   - Watch resumes the AI round in spectator mode.
+- Round result text includes survival time, KOs, item pickups, bombs placed, and death cause when available.
 
 ## Mobile And Platform Hardening
 
@@ -177,6 +184,11 @@ reconstructing decisions from the chat history.
 - Closing Settings after opening it from gameplay starts the 3-second resume countdown.
 - `document.hidden` / window blur pauses the game.
 - Fullscreen transition blur is ignored briefly so entering fullscreen does not immediately pause.
+- Blast Guide assist:
+  - defaults to Off on every difficulty
+  - is toggled from Settings
+  - only shows blocked-by-walls blast range previews for bombs near detonation
+  - does not change bomb damage rules
 
 ## Fullscreen Behavior
 
