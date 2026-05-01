@@ -44,6 +44,7 @@
   var hudFire = document.getElementById("hudFire");
   var hudSpeed = document.getElementById("hudSpeed");
   var hudWins = document.getElementById("hudWins");
+  var statusChips = document.getElementById("statusChips");
   var toast = document.getElementById("toast");
   var statBombs = document.getElementById("statBombs");
   var statFire = document.getElementById("statFire");
@@ -92,6 +93,8 @@
   var vibrationAvailable = canUseVibration();
   var vibrationEnabled = vibrationAvailable;
   var blastGuideEnabled = false;
+  var playerWinStreak = 0;
+  var playerBestWinStreak = 0;
   document.documentElement.classList.toggle("is-platform-embed", platformEmbedMode);
   if (appShell) appShell.classList.toggle("is-platform-embed", platformEmbedMode);
 
@@ -620,6 +623,37 @@
     return window.AIGameShare && typeof window.AIGameShare === "object" ? window.AIGameShare : null;
   }
 
+  function cleanPlatformKey(value) {
+    var key = String(value || "").trim();
+    return /^[a-z0-9_:-]{1,40}$/.test(key) ? key : null;
+  }
+
+  function cleanPlatformMeta(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    var clean = {};
+    var count = 0;
+    Object.keys(value).some(function (key) {
+      var item = value[key];
+      if (count >= 16) return true;
+      if (["string", "number", "boolean"].indexOf(typeof item) !== -1) {
+        clean[key] = item;
+        count += 1;
+      }
+      return false;
+    });
+    return clean;
+  }
+
+  function postPlatformMessage(type, payload) {
+    if (!platformEmbedMode || !window.parent || window.parent === window) return false;
+    var message = { type: "aigameshare:" + type };
+    Object.keys(payload || {}).forEach(function (key) {
+      message[key] = payload[key];
+    });
+    window.parent.postMessage(message, "*");
+    return true;
+  }
+
   function configuredPlatformSdkSrc() {
     var src = queryValue("platformSdkSrc") ||
       queryValue("sdkSrc") ||
@@ -645,15 +679,18 @@
     document.head.appendChild(script);
   }
 
-  function withPlatformApi(callback, attempts) {
+  function withPlatformApi(callback, attempts, fallback) {
     var api = getPlatformApi();
     if (api) {
       callback(api);
       return;
     }
-    if (attempts <= 0) return;
+    if (attempts <= 0) {
+      if (typeof fallback === "function") fallback();
+      return;
+    }
     window.setTimeout(function () {
-      withPlatformApi(callback, attempts - 1);
+      withPlatformApi(callback, attempts - 1, fallback);
     }, 120);
   }
 
@@ -671,38 +708,54 @@
       spectating: Boolean(state && state.spectating),
       deathChoiceOpen: Boolean(state && state.deathChoiceOpen),
       soundEnabled: soundEnabled,
-      vibrationEnabled: vibrationEnabled,
       blastGuideEnabled: blastGuideEnabled,
       playerWins: player ? player.wins : 0,
-      bombsPlaced: state && state.stats ? state.stats.bombsPlaced : 0,
-      itemsCollected: state && state.stats ? state.stats.itemsCollected : 0,
-      kills: state && state.stats ? state.stats.kills : 0,
+      playerWinStreak: playerWinStreak,
+      playerBestWinStreak: playerBestWinStreak,
       result: state && state.resultText ? state.resultText : ""
     };
   }
 
   function announcePlatformReady() {
+    if (!platformEmbedMode && !getPlatformApi()) return;
     withPlatformApi(function (api) {
       if (platformReadySent) return;
       platformReadySent = true;
       if (typeof api.ready === "function") api.ready();
       if (typeof api.track === "function") api.track("game_loaded", platformState("loaded"));
       if (typeof api.setState === "function") api.setState(platformState("loaded"));
-    }, 20);
+    }, 20, function () {
+      if (platformReadySent) return;
+      platformReadySent = true;
+      postPlatformMessage("ready", { version: "bubble-battle-fallback" });
+      trackPlatform("game_loaded", platformState("loaded"));
+      setPlatformState("loaded");
+    });
   }
 
   function trackPlatform(eventName, props) {
     if (!platformEmbedMode && !getPlatformApi()) return;
     withPlatformApi(function (api) {
       if (typeof api.track === "function") api.track(eventName, props || platformState(eventName));
-    }, 4);
+    }, 4, function () {
+      var event = cleanPlatformKey(eventName);
+      if (!event) return;
+      postPlatformMessage("analytics.track", {
+        event: event,
+        props: cleanPlatformMeta(props || platformState(eventName))
+      });
+    });
   }
 
   function setPlatformState(reason) {
     if (!platformEmbedMode && !getPlatformApi()) return;
     withPlatformApi(function (api) {
       if (typeof api.setState === "function") api.setState(platformState(reason));
-    }, 4);
+    }, 4, function () {
+      postPlatformMessage("state.update", {
+        state: cleanPlatformMeta(platformState(reason))
+      });
+    });
   }
 
   function submitPlatformScore(leaderboard, value, meta) {
@@ -711,7 +764,16 @@
       if (typeof api.submitScore === "function") {
         api.submitScore(leaderboard, value, { meta: meta || platformState("score") });
       }
-    }, 4);
+    }, 4, function () {
+      var key = cleanPlatformKey(leaderboard);
+      var score = Number(value);
+      if (!key || !Number.isFinite(score)) return;
+      postPlatformMessage("score.submit", {
+        leaderboard: key,
+        value: score,
+        meta: cleanPlatformMeta(meta || platformState("score"))
+      });
+    });
   }
 
   function makeGrid() {
@@ -979,6 +1041,7 @@
       state.deathChoicePending = true;
       state.stats.deathCause = deathCauseText(killerId);
       state.lastDeathCause = state.stats.deathCause;
+      resetWinStreak();
     }
     if (!deferRoundCheck) {
       checkRoundEnd();
@@ -1048,6 +1111,7 @@
     state.stats.survivedSeconds = survivedSeconds;
     var player = state.players[0];
     var playerWon = Boolean(winner && winner.id === 0);
+    updateWinStreak(playerWon);
     var result = state.resultText || (winner ? winner.name + " wins" : "Draw");
     var meta = {
       round: state.round,
@@ -1057,6 +1121,8 @@
       winner: winner ? winner.name : "Draw",
       playerWon: playerWon,
       playerWins: player.wins,
+      playerWinStreak: playerWinStreak,
+      playerBestWinStreak: playerBestWinStreak,
       survivedSeconds: survivedSeconds,
       bombsPlaced: state.stats.bombsPlaced,
       itemsCollected: state.stats.itemsCollected,
@@ -1066,7 +1132,21 @@
     trackPlatform("round_end", meta);
     submitPlatformScore("survival_seconds", survivedSeconds, meta);
     if (playerWon) submitPlatformScore("wins", player.wins, meta);
+    if (playerWon) submitPlatformScore("win_streak", playerWinStreak, meta);
     setPlatformState(reason || "round_end");
+  }
+
+  function updateWinStreak(playerWon) {
+    if (playerWon) {
+      playerWinStreak += 1;
+      playerBestWinStreak = Math.max(playerBestWinStreak, playerWinStreak);
+    } else {
+      playerWinStreak = 0;
+    }
+  }
+
+  function resetWinStreak() {
+    playerWinStreak = 0;
   }
 
   function checkRoundEnd() {
@@ -1578,6 +1658,7 @@
     if (hudFire) hudFire.textContent = player.fire;
     if (hudSpeed) hudSpeed.textContent = player.speed;
     if (hudWins) hudWins.textContent = player.wins;
+    updateStatusChips();
     syncPauseButtons();
     scoreList.innerHTML = state.players.map(function (p) {
       return '<div class="score-row ' + (p.alive ? "" : "dead") + '">' +
@@ -1592,6 +1673,28 @@
     return state.players.filter(function (player) {
       return player.alive;
     }).length;
+  }
+
+  function updateStatusChips() {
+    if (!statusChips) return;
+    var chips = [
+      { label: currentDifficulty().label, tone: difficulty },
+      { label: currentMap().name, tone: "map" },
+      { label: soundEnabled ? "Sound On" : "Sound Off", tone: soundEnabled ? "sound-on" : "off" },
+      { label: blastGuideEnabled ? "Guide On" : "Guide Off", tone: blastGuideEnabled ? "guide-on" : "off" }
+    ];
+    if (vibrationAvailable) {
+      chips.push({ label: vibrationEnabled ? "Vibe On" : "Vibe Off", tone: vibrationEnabled ? "vibe-on" : "off" });
+    }
+    if (playerWinStreak > 0) {
+      chips.push({ label: "Streak " + playerWinStreak, tone: "streak" });
+    }
+    if (state.overloadStage > 0) {
+      chips.push({ label: state.overloadStage > 1 ? "Max Overload" : "Overload", tone: "overload" });
+    }
+    statusChips.innerHTML = chips.map(function (chip) {
+      return '<span class="status-chip status-' + chip.tone + '">' + chip.label + "</span>";
+    }).join("");
   }
 
   function formatTime(ms) {
@@ -1635,8 +1738,8 @@
     clearPlayerInput();
     setGameFlowContent(
       kicker || "Ready",
-      "Round " + state.round,
-      body || currentDifficulty().label + " on " + currentMap().name + ". Survive 90 seconds or be the last one standing.",
+      currentDifficulty().label + " - " + currentMap().name,
+      body || "Round " + state.round + ". 90 seconds. Last one standing.",
       "Start Battle"
     );
     if (gameFlowOverlay) gameFlowOverlay.hidden = false;
@@ -1662,7 +1765,9 @@
   function resultSummaryText() {
     var stats = state.stats || makeRoundStats();
     var death = stats.deathCause ? " / Cause: " + stats.deathCause : "";
-    return "Survived " + stats.survivedSeconds + "s / KOs " + stats.kills + " / Items " + stats.itemsCollected + " / Bombs " + stats.bombsPlaced + death + ". Wins: You " + state.players[0].wins + " / Bolt " + state.players[1].wins + " / Mint " + state.players[2].wins + " / Gold " + state.players[3].wins;
+    var streak = playerWinStreak > 0 ? " / Streak " + playerWinStreak : "";
+    var best = playerBestWinStreak > 0 ? " / Best " + playerBestWinStreak : "";
+    return "Survived " + stats.survivedSeconds + "s / KOs " + stats.kills + streak + best + " / Items " + stats.itemsCollected + " / Bombs " + stats.bombsPlaced + death + ". Wins: You " + state.players[0].wins + " / Bolt " + state.players[1].wins + " / Mint " + state.players[2].wins + " / Gold " + state.players[3].wins;
   }
 
   function maybeShowDeathChoice() {
@@ -1691,9 +1796,10 @@
   function restartAfterDeath(event) {
     captureInput(event);
     playButtonSound();
+    resetWinStreak();
     state = makeGame(true, false, false);
     hideDeathChoice();
-    showStartOverlay("Try Again", "Restart this round and get back in fast.");
+    showStartOverlay("Try Again", "Round " + state.round + ". Get back in.");
     trackPlatform("death_restart", platformState("death_restart"));
   }
 
@@ -2667,6 +2773,7 @@
 
   function resetRound() {
     playButtonSound();
+    resetWinStreak();
     state = makeGame(true, false, false);
     showStartOverlay("Round Reset");
     closeSettings();
@@ -2675,11 +2782,12 @@
 
   function nextMap() {
     playButtonSound();
+    resetWinStreak();
     mapIndex = (mapIndex + 1) % mapTemplates.length;
     syncMapButtons();
     state = makeGame(false, false, true);
     flash(currentMap().name + " map");
-    showStartOverlay("New Map", "Now playing " + currentMap().name + " on " + currentDifficulty().label + ".");
+    showStartOverlay("New Map");
     closeSettings();
     trackPlatform("map_next", platformState("map_next"));
   }
@@ -2690,11 +2798,12 @@
     });
     if (nextIndex < 0) return;
     playButtonSound();
+    resetWinStreak();
     mapIndex = nextIndex;
     syncMapButtons();
     state = makeGame(false, false, true);
     flash(currentMap().name + " map");
-    showStartOverlay("New Map", "Now playing " + currentMap().name + " on " + currentDifficulty().label + ".");
+    showStartOverlay("New Map");
     closeSettings();
     trackPlatform("map_select", platformState("map_select"));
   }
@@ -2811,8 +2920,9 @@
 
   function restartGame(reason) {
     playButtonSound();
+    resetWinStreak();
     state = makeGame(false, false, true);
-    showStartOverlay(reason || "Restarted", currentDifficulty().label + " on " + currentMap().name + ". Survive 90 seconds or be the last one standing.");
+    showStartOverlay(reason || "Restarted", "Round " + state.round + ". 90 seconds.");
     closeSettings();
     trackPlatform("game_restart", platformState("game_restart"));
     updateUi();
@@ -2821,11 +2931,12 @@
   function setDifficulty(nextDifficulty) {
     if (!difficultySettings[nextDifficulty]) return false;
     playButtonSound();
+    resetWinStreak();
     difficulty = nextDifficulty;
     syncDifficultyButtons();
     state = makeGame(false, false, true);
     flash(currentDifficulty().label + " difficulty");
-    showStartOverlay("Difficulty Set", currentDifficulty().label + " on " + currentMap().name + ".");
+    showStartOverlay("Difficulty Set");
     closeSettings();
     trackPlatform("difficulty_select", platformState("difficulty_select"));
     return true;
@@ -2840,6 +2951,8 @@
       playButtonSound();
     }
     syncOptionButtons();
+    updateStatusChips();
+    flash(value ? "Sound On" : "Sound Off");
     trackPlatform("sound_toggle", platformState("sound_toggle"));
   }
 
@@ -2848,12 +2961,15 @@
     vibrationEnabled = value;
     if (vibrationEnabled) vibrate(25);
     syncOptionButtons();
+    updateStatusChips();
+    flash(value ? "Vibration On" : "Vibration Off");
     trackPlatform("vibration_toggle", platformState("vibration_toggle"));
   }
 
   function setBlastGuideEnabled(value) {
     blastGuideEnabled = value;
     syncOptionButtons();
+    updateStatusChips();
     flash(value ? "Blast Guide On" : "Blast Guide Off");
     trackPlatform("blast_guide_toggle", platformState("blast_guide_toggle"));
   }
@@ -2949,8 +3065,10 @@
     }
     if (key === "r" && !event.repeat) {
       clearPlayerInput();
+      resetWinStreak();
       state = makeGame(true, false, false);
       showStartOverlay("Round Reset");
+      trackPlatform("round_reset", platformState("round_reset"));
       event.preventDefault();
       return;
     }

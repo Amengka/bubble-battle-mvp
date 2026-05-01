@@ -42,6 +42,8 @@ reconstructing decisions from the chat history.
   - The AIGameShare SDK currently exposes child-to-parent methods:
     `ready()`, `submitScore()`, `unlockAchievement()`, `track()`, and
     `setState()`. It does not expose fullscreen or restart callbacks.
+  - The SDK works by `window.parent.postMessage(...)`, so sandboxed hosting is
+    expected. The game must not depend on parent DOM access.
 
 ## Implemented Gameplay
 
@@ -247,6 +249,12 @@ reconstructing decisions from the chat history.
   - `setState()` for current phase, round, map, difficulty, timer, pause, result
   - `submitScore("survival_seconds", value)`
   - `submitScore("wins", value)` when the local player wins
+  - `submitScore("win_streak", value)` when the local player wins
+  - Score/state metadata stays flat and within the SDK's 16-field limit.
+  - If `window.AIGameShare` is not injected, embed mode falls back to the same
+    `aigameshare:*` `postMessage` protocol used by the SDK.
+  - `win_streak` increments only on local-player wins and resets on loss, draw,
+    death restart, manual reset, map change, difficulty change, or full restart.
 - Public in-game host API:
   - `window.BubbleBattle.start()`
   - `window.BubbleBattle.restart()`
