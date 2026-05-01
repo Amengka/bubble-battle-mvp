@@ -429,6 +429,66 @@ html.is-platform-embed .mobile-fullscreen {
   color: #fff4c8;
 }
 
+.status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: min(100%, 832px);
+  margin: 0 0 8px;
+}
+
+.status-chip {
+  min-height: 24px;
+  padding: 5px 8px;
+  border: 1px solid rgba(244, 242, 234, 0.13);
+  border-radius: 6px;
+  background: rgba(29, 34, 40, 0.78);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.status-easy {
+  border-color: rgba(118, 189, 112, 0.34);
+  color: #c6efbd;
+}
+
+.status-normal,
+.status-map {
+  border-color: rgba(101, 186, 208, 0.3);
+  color: #cdeef5;
+}
+
+.status-hard {
+  border-color: rgba(225, 107, 88, 0.38);
+  color: #ffc1b2;
+}
+
+.status-sound-on,
+.status-guide-on,
+.status-vibe-on {
+  border-color: rgba(229, 184, 76, 0.42);
+  color: #fff2a8;
+}
+
+.status-off {
+  opacity: 0.62;
+}
+
+.status-streak {
+  border-color: rgba(134, 219, 154, 0.46);
+  background: rgba(28, 58, 43, 0.78);
+  color: #d9ffd9;
+}
+
+.status-overload {
+  border-color: rgba(255, 176, 94, 0.62);
+  background: rgba(74, 63, 38, 0.88);
+  color: #fff2a8;
+}
+
 #gameCanvas {
   display: block;
   width: 100%;
@@ -989,6 +1049,19 @@ dd {
   .mobile-hud b {
     margin-top: 3px;
     font-size: 0.8rem;
+  }
+
+  .status-chips {
+    flex: 0 0 auto;
+    gap: 4px;
+    margin-bottom: 5px;
+    overflow: hidden;
+  }
+
+  .status-chip {
+    min-height: 21px;
+    padding: 4px 6px;
+    font-size: 0.58rem;
   }
 
   .board-wrap {
