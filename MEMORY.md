@@ -148,6 +148,8 @@ reconstructing decisions from the chat history.
   - joystick direction has hysteresis to reduce horizontal/vertical flicker near diagonals
   - joystick diagonal input stores a secondary fallback direction if the primary direction is blocked
   - high speed buffs use a smoother movement-delay curve with a minimum delay to avoid animation/input desync
+  - joystick and Bomb touch controls were enlarged for normal iPhone-size portrait screens
+  - joystick deadzone was reduced so thumb movement starts responding sooner
 - Opening Settings during gameplay pauses the game.
 - Closing Settings after opening it from gameplay starts the 3-second resume countdown.
 - `document.hidden` / window blur pauses the game.
