@@ -59,7 +59,8 @@ reconstructing decisions from the chat history.
 - Power-ups:
   - Fire Up
   - Bomb Up
-  - Speed Up
+  - Speed Up exists in code but no longer drops in normal blocks
+  - Speed is mainly reserved for late-round Overload
 - Difficulty presets:
   - Easy
   - Normal
@@ -69,8 +70,14 @@ reconstructing decisions from the chat history.
   - Crossfire
   - Garden
   - Ruins
-- 2-minute arcade timer.
+- 90-second arcade timer.
   - If time expires before a winner is decided, the round is a draw.
+- Overload is the late-round closer:
+  - warning at 50 seconds remaining
+  - phase 1 at 45 seconds remaining: +2 Bomb, +2 Fire, +1 Speed
+  - phase 2 at 20 seconds remaining: +1 Bomb, +1 Fire, +1 Speed
+  - buffs apply to all living players and last only for the current round
+  - current stat caps remain Bomb 5, Fire 6, Speed 5
 - Pause support with a 3-second resume countdown.
 - Round win tracking and automatic next-round flow.
 
@@ -130,6 +137,18 @@ reconstructing decisions from the chat history.
   - eliminated characters spawn a short impact ring, cross flash, and particles
   - local-player elimination also triggers a brief board shake and red edge flash
   - this is visual only and does not change the blast damage rules
+- Generated WebAudio feedback exists for:
+  - bomb placement
+  - explosions
+  - kill/elimination
+  - item pickup
+  - round start/result
+  - pause resume countdown
+  - Hurry Up / Overload
+  - key buttons
+- The local player's death can pause the round and open a choice overlay:
+  - Restart starts the current round again.
+  - Watch resumes the AI round in spectator mode.
 
 ## Mobile And Platform Hardening
 
@@ -150,6 +169,10 @@ reconstructing decisions from the chat history.
   - high speed buffs use a smoother movement-delay curve with a minimum delay to avoid animation/input desync
   - joystick and Bomb touch controls were enlarged for normal iPhone-size portrait screens
   - joystick deadzone was reduced so thumb movement starts responding sooner
+  - joystick now uses the press position as a dynamic origin and drifts with the thumb near the movement limit
+- Desktop keyboard movement uses a latest-pressed direction stack for WASD/arrow keys.
+- Holding multiple keyboard directions can fall back to the previous held direction if the latest direction is blocked.
+- Space bomb placement ignores browser key repeat so holding Space does not spam bombs.
 - Opening Settings during gameplay pauses the game.
 - Closing Settings after opening it from gameplay starts the 3-second resume countdown.
 - `document.hidden` / window blur pauses the game.
