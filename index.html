@@ -48,8 +48,19 @@
             <div class="game-flow-panel">
               <p id="gameFlowKicker" class="game-flow-kicker">Ready</p>
               <h2 id="gameFlowTitle">Bubble Battle</h2>
-              <p id="gameFlowBody">Clear blocks, trap rivals, and survive the 2-minute round.</p>
+              <p id="gameFlowBody">Clear blocks, trap rivals, and survive the 90-second round.</p>
               <button id="gameFlowPrimary" class="game-flow-primary" type="button">Start Battle</button>
+            </div>
+          </div>
+          <div id="deathChoiceOverlay" class="death-choice-overlay" role="dialog" aria-live="polite" aria-labelledby="deathChoiceTitle" hidden>
+            <div class="death-choice-panel">
+              <p class="death-choice-kicker">Knocked Out</p>
+              <h2 id="deathChoiceTitle">You got blasted</h2>
+              <p>Restart the round now or watch the rivals finish it out.</p>
+              <div class="death-choice-actions">
+                <button id="deathRestartBtn" class="death-restart" type="button">Restart</button>
+                <button id="deathWatchBtn" class="death-watch" type="button">Watch</button>
+              </div>
             </div>
           </div>
         </div>

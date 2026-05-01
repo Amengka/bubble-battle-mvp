@@ -7,13 +7,14 @@ A small browser-based Bomberman-like prototype.
 - 13 x 11 grid arena
 - Four players: one local player and three AI opponents
 - Hard blocks, destructible soft blocks, bombs, chain explosions
-- Fire Up, Bomb Up, and Speed Up power-ups
+- Fire Up and Bomb Up drops, with Speed reserved for late-round Overload
 - Easy, Normal, and Hard difficulty presets
 - Classic, Crossfire, Garden, and Ruins map templates
 - 2.5D map rendering with cube blocks, crates, trees, and small house obstacles
 - Direction-aware pseudo-3D character rendering with smooth movement and walk frames
 - Round win tracking and quick restart
-- 2-minute arcade round timer; time-up rounds are draws
+- 90-second arcade round timer; time-up rounds are draws
+- Late-round Overload buffs at 30s and 15s to speed up decisive finishes
 - Mobile HUD keeps time and player stats above the board
 - Portrait 9:16-friendly mobile shell with compact HUD and top-corner game controls
 - In-game Settings panel for difficulty, map, restart, and next map

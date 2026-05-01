@@ -10,12 +10,17 @@
   var HIT_EFFECT_TIME = 560;
   var SCREEN_HIT_TIME = 360;
   var RESUME_COUNTDOWN_TIME = 3000;
-  var ROUND_TIME = 120000;
+  var ROUND_TIME = 90000;
+  var OVERLOAD_WARNING_TIME = 50000;
+  var OVERLOAD_PHASE_1_TIME = 45000;
+  var OVERLOAD_PHASE_2_TIME = 20000;
   var ROUND_DELAY = 1500;
   var MIN_MOVE_DELAY = 86;
   var INPUT_BUFFER_TIME = 150;
   var MAX_HUMAN_STEPS_PER_FRAME = 1;
-  var JOYSTICK_DEADZONE = 0.15;
+  var JOYSTICK_DEADZONE = 0.12;
+  var JOYSTICK_MAX_RANGE = 0.3;
+  var JOYSTICK_FLOAT_RANGE = 0.34;
   var JOYSTICK_SWITCH_RATIO = 1.24;
   var AI_DANGER_WINDOW = 1350;
   var AI_ESCAPE_DEPTH = 9;
@@ -29,6 +34,9 @@
   var gameFlowTitle = document.getElementById("gameFlowTitle");
   var gameFlowBody = document.getElementById("gameFlowBody");
   var gameFlowPrimary = document.getElementById("gameFlowPrimary");
+  var deathChoiceOverlay = document.getElementById("deathChoiceOverlay");
+  var deathRestartBtn = document.getElementById("deathRestartBtn");
+  var deathWatchBtn = document.getElementById("deathWatchBtn");
   var roundStatus = document.getElementById("roundStatus");
   var roundTimer = document.getElementById("roundTimer");
   var hudTimer = document.getElementById("hudTimer");
@@ -62,9 +70,13 @@
   var platformEmbedMode = detectPlatformEmbedMode();
   var platformReadySent = false;
   var keys = {};
+  var keyboardDirStack = [];
   var touchDir = null;
   var touchSecondaryDir = null;
   var joystickPointer = null;
+  var joystickBaseX = 0;
+  var joystickBaseY = 0;
+  var audioContext = null;
   var settingsResumeAfterClose = false;
   var fullscreenTransitionUntil = 0;
   var gamePhase = "start";
@@ -74,6 +86,29 @@
   var mapIndex = 0;
   document.documentElement.classList.toggle("is-platform-embed", platformEmbedMode);
   if (appShell) appShell.classList.toggle("is-platform-embed", platformEmbedMode);
+
+  var keyboardDirectionNames = {
+    arrowup: "up",
+    w: "up",
+    arrowdown: "down",
+    s: "down",
+    arrowleft: "left",
+    a: "left",
+    arrowright: "right",
+    d: "right"
+  };
+
+  var keyboardDirections = {
+    up: { x: 0, y: -1 },
+    down: { x: 0, y: 1 },
+    left: { x: -1, y: 0 },
+    right: { x: 1, y: 0 }
+  };
+
+  var overloadStages = [
+    { id: 1, timeLeft: OVERLOAD_PHASE_1_TIME, label: "Overload", buffs: { bombs: 2, fire: 2, speed: 1 } },
+    { id: 2, timeLeft: OVERLOAD_PHASE_2_TIME, label: "Max Overload", buffs: { bombs: 1, fire: 1, speed: 1 } }
+  ];
 
   var difficultySettings = {
     easy: {
@@ -87,9 +122,7 @@
       aiItemWeight: 32,
       playerStart: { bombs: 1, fire: 2, speed: 2 },
       aiStart: { bombs: 1, fire: 2, speed: 1 },
-      dropFire: 0.13,
-      dropBomb: 0.24,
-      dropSpeed: 0.36
+      dropWeights: { fire: 16, bomb: 16, speed: 0 }
     },
     normal: {
       label: "Normal",
@@ -102,9 +135,7 @@
       aiItemWeight: 24,
       playerStart: { bombs: 1, fire: 2, speed: 1 },
       aiStart: { bombs: 1, fire: 2, speed: 1 },
-      dropFire: 0.1,
-      dropBomb: 0.18,
-      dropSpeed: 0.27
+      dropWeights: { fire: 13, bomb: 13, speed: 0 }
     },
     hard: {
       label: "Hard",
@@ -117,9 +148,7 @@
       aiItemWeight: 18,
       playerStart: { bombs: 1, fire: 2, speed: 1 },
       aiStart: { bombs: 1, fire: 2, speed: 2 },
-      dropFire: 0.08,
-      dropBomb: 0.15,
-      dropSpeed: 0.22
+      dropWeights: { fire: 10, bomb: 12, speed: 0 }
     }
   };
   var mapTemplates = [
@@ -274,6 +303,12 @@
       screenHitTimer: 0,
       ended: false,
       paused: false,
+      spectating: false,
+      deathChoiceOpen: false,
+      deathChoicePending: false,
+      deathChoiceShown: false,
+      overloadWarningShown: false,
+      overloadStage: 0,
       resumeCountdown: 0,
       timeLeft: ROUND_TIME,
       nextRoundAt: 0,
@@ -300,6 +335,12 @@
       maxBombs: startStats.bombs,
       fire: startStats.fire,
       speed: startStats.speed,
+      baseMaxBombs: startStats.bombs,
+      baseFire: startStats.fire,
+      baseSpeed: startStats.speed,
+      overloadBombs: 0,
+      overloadFire: 0,
+      overloadSpeed: 0,
       wins: old ? old.wins : 0,
       bombsActive: 0,
       moveCooldown: 0,
@@ -327,6 +368,175 @@
 
   function currentMap() {
     return mapTemplates[mapIndex] || mapTemplates[0];
+  }
+
+  function getAudioContext() {
+    var AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+    if (!audioContext) audioContext = new AudioCtx();
+    return audioContext;
+  }
+
+  function unlockAudio() {
+    var ctx = getAudioContext();
+    if (!ctx) return;
+    if (ctx.state === "suspended") {
+      ctx.resume();
+    }
+  }
+
+  function playableAudioContext() {
+    var ctx = getAudioContext();
+    if (!ctx || ctx.state !== "running") return null;
+    return ctx;
+  }
+
+  function connectTimedGain(ctx, start, peak, sustain, duration) {
+    var gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, peak), start + 0.018);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, sustain), start + duration * 0.34);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    gain.connect(ctx.destination);
+    return gain;
+  }
+
+  function makeNoiseBuffer(ctx, duration) {
+    var length = Math.max(1, Math.floor(ctx.sampleRate * duration));
+    var buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    var data = buffer.getChannelData(0);
+    for (var i = 0; i < length; i += 1) {
+      data[i] = (Math.random() * 2 - 1) * (1 - i / length);
+    }
+    return buffer;
+  }
+
+  function playExplosionSound() {
+    var ctx = playableAudioContext();
+    if (!ctx) return;
+    var now = ctx.currentTime;
+    var rumble = ctx.createOscillator();
+    var rumbleGain = connectTimedGain(ctx, now, 0.24, 0.06, 0.42);
+    rumble.type = "triangle";
+    rumble.frequency.setValueAtTime(128, now);
+    rumble.frequency.exponentialRampToValueAtTime(42, now + 0.34);
+    rumble.connect(rumbleGain);
+    rumble.start(now);
+    rumble.stop(now + 0.44);
+
+    var noise = ctx.createBufferSource();
+    var noiseGain = connectTimedGain(ctx, now, 0.18, 0.025, 0.24);
+    noise.buffer = makeNoiseBuffer(ctx, 0.24);
+    noise.connect(noiseGain);
+    noise.start(now);
+    noise.stop(now + 0.25);
+  }
+
+  function playKillSound(isLocalPlayer) {
+    var ctx = playableAudioContext();
+    if (!ctx) return;
+    var now = ctx.currentTime;
+    var duration = isLocalPlayer ? 0.36 : 0.2;
+    var tone = ctx.createOscillator();
+    var gain = connectTimedGain(ctx, now, isLocalPlayer ? 0.22 : 0.16, 0.012, duration);
+    tone.type = isLocalPlayer ? "sawtooth" : "square";
+    tone.frequency.setValueAtTime(isLocalPlayer ? 310 : 560, now);
+    tone.frequency.exponentialRampToValueAtTime(isLocalPlayer ? 88 : 180, now + duration);
+    tone.connect(gain);
+    tone.start(now);
+    tone.stop(now + duration + 0.02);
+  }
+
+  function playBombSetSound() {
+    var ctx = playableAudioContext();
+    if (!ctx) return;
+    var now = ctx.currentTime;
+    var tone = ctx.createOscillator();
+    var gain = connectTimedGain(ctx, now, 0.08, 0.012, 0.1);
+    tone.type = "square";
+    tone.frequency.setValueAtTime(180, now);
+    tone.frequency.exponentialRampToValueAtTime(105, now + 0.08);
+    tone.connect(gain);
+    tone.start(now);
+    tone.stop(now + 0.11);
+  }
+
+  function playPickupSound(kind) {
+    var ctx = playableAudioContext();
+    if (!ctx) return;
+    var now = ctx.currentTime;
+    var first = ctx.createOscillator();
+    var second = ctx.createOscillator();
+    var gain = connectTimedGain(ctx, now, 0.07, 0.018, 0.18);
+    var base = kind === "bomb" ? 360 : kind === "speed" ? 520 : 430;
+    first.type = "triangle";
+    second.type = "sine";
+    first.frequency.setValueAtTime(base, now);
+    first.frequency.exponentialRampToValueAtTime(base * 1.5, now + 0.16);
+    second.frequency.setValueAtTime(base * 1.5, now + 0.04);
+    second.frequency.exponentialRampToValueAtTime(base * 2, now + 0.18);
+    first.connect(gain);
+    second.connect(gain);
+    first.start(now);
+    second.start(now + 0.035);
+    first.stop(now + 0.19);
+    second.stop(now + 0.2);
+  }
+
+  function playRoundStartSound() {
+    var ctx = playableAudioContext();
+    if (!ctx) return;
+    playToneSequence(ctx, [360, 480, 720], 0.08, 0.07, "triangle");
+  }
+
+  function playRoundResultSound(kind) {
+    var ctx = playableAudioContext();
+    if (!ctx) return;
+    if (kind === "win") {
+      playToneSequence(ctx, [420, 560, 760, 960], 0.09, 0.08, "triangle");
+    } else if (kind === "draw") {
+      playToneSequence(ctx, [330, 300], 0.12, 0.07, "sine");
+    } else {
+      playToneSequence(ctx, [360, 240, 150], 0.12, 0.08, "sawtooth");
+    }
+  }
+
+  function playCountdownSound(finalBeep) {
+    var ctx = playableAudioContext();
+    if (!ctx) return;
+    playToneSequence(ctx, [finalBeep ? 760 : 520], 0.08, finalBeep ? 0.09 : 0.06, "square");
+  }
+
+  function playHurrySound() {
+    var ctx = playableAudioContext();
+    if (!ctx) return;
+    playToneSequence(ctx, [520, 360, 520], 0.08, 0.08, "square");
+  }
+
+  function playOverloadSound(stage) {
+    var ctx = playableAudioContext();
+    if (!ctx) return;
+    playToneSequence(ctx, stage > 1 ? [440, 660, 880, 1100] : [380, 560, 760], 0.075, 0.1, "sawtooth");
+  }
+
+  function playButtonSound() {
+    var ctx = playableAudioContext();
+    if (!ctx) return;
+    playToneSequence(ctx, [500], 0.045, 0.035, "triangle");
+  }
+
+  function playToneSequence(ctx, freqs, noteLength, volume, type) {
+    var now = ctx.currentTime;
+    freqs.forEach(function (freq, index) {
+      var start = now + index * noteLength * 0.82;
+      var tone = ctx.createOscillator();
+      var gain = connectTimedGain(ctx, start, volume, volume * 0.22, noteLength);
+      tone.type = type || "sine";
+      tone.frequency.setValueAtTime(freq, start);
+      tone.connect(gain);
+      tone.start(start);
+      tone.stop(start + noteLength + 0.02);
+    });
   }
 
   function clamp(value, min, max) {
@@ -418,6 +628,8 @@
       timeLeft: state ? Math.ceil(state.timeLeft / 1000) : Math.ceil(ROUND_TIME / 1000),
       alive: state ? aliveCount() : 0,
       paused: Boolean(state && state.paused),
+      spectating: Boolean(state && state.spectating),
+      deathChoiceOpen: Boolean(state && state.deathChoiceOpen),
       playerWins: player ? player.wins : 0,
       result: state && state.resultText ? state.resultText : ""
     };
@@ -596,15 +808,21 @@
     var tile = tileAt(player.x, player.y);
     if (tile === "item-fire") {
       player.fire = Math.min(6, player.fire + 1);
+      player.baseFire = Math.min(6, player.baseFire + 1);
       setTile(player.x, player.y, "floor");
+      playPickupSound("fire");
       flash(player.name + " got Fire Up");
     } else if (tile === "item-bomb") {
       player.maxBombs = Math.min(5, player.maxBombs + 1);
+      player.baseMaxBombs = Math.min(5, player.baseMaxBombs + 1);
       setTile(player.x, player.y, "floor");
+      playPickupSound("bomb");
       flash(player.name + " got Bomb Up");
     } else if (tile === "item-speed") {
       player.speed = Math.min(5, player.speed + 1);
+      player.baseSpeed = Math.min(5, player.baseSpeed + 1);
       setTile(player.x, player.y, "floor");
+      playPickupSound("speed");
       flash(player.name + " got Speed Up");
     }
   }
@@ -621,11 +839,13 @@
       exploded: false
     });
     player.bombsActive += 1;
+    playBombSetSound();
   }
 
   function explodeBomb(bomb) {
     if (bomb.exploded) return;
     bomb.exploded = true;
+    playExplosionSound();
     var owner = state.players[bomb.owner];
     if (owner) owner.bombsActive = Math.max(0, owner.bombsActive - 1);
     var cells = [{ x: bomb.x, y: bomb.y }];
@@ -670,15 +890,19 @@
       killPlayer(hit, true);
     });
     if (hits.length) checkRoundEnd();
+    maybeShowDeathChoice();
   }
 
   function randomDrop() {
-    var roll = Math.random();
     var settings = currentDifficulty();
-    if (roll < settings.dropFire) return "item-fire";
-    if (roll < settings.dropBomb) return "item-bomb";
-    if (roll < settings.dropSpeed) return "item-speed";
-    return "floor";
+    var weights = settings.dropWeights || {};
+    var total = Math.max(0, weights.fire || 0) + Math.max(0, weights.bomb || 0) + Math.max(0, weights.speed || 0);
+    if (total <= 0) return "floor";
+    var roll = Math.random() * 100;
+    if (roll >= total) return "floor";
+    if (roll < weights.fire) return "item-fire";
+    if (roll < weights.fire + weights.bomb) return "item-bomb";
+    return "item-speed";
   }
 
   function isBlasted(x, y) {
@@ -693,9 +917,14 @@
   function killPlayer(player, deferRoundCheck) {
     if (!player.alive) return;
     addHitFeedback(player);
+    playKillSound(player.id === 0);
     player.alive = false;
     flash(player.name + " is out");
-    if (!deferRoundCheck) checkRoundEnd();
+    if (player.id === 0) state.deathChoicePending = true;
+    if (!deferRoundCheck) {
+      checkRoundEnd();
+      maybeShowDeathChoice();
+    }
   }
 
   function addHitFeedback(player) {
@@ -768,9 +997,11 @@
       alive[0].wins += 1;
       state.resultText = alive[0].name + " wins";
       flash(alive[0].name + " wins the round");
+      playRoundResultSound(alive[0].id === 0 ? "win" : "loss");
     } else {
       state.resultText = "Draw";
       flash("Draw round");
+      playRoundResultSound("draw");
     }
     reportRoundResult("elimination", alive[0] || null);
     showResultOverlay();
@@ -783,6 +1014,7 @@
     state.nextRoundAt = 0;
     state.resultText = "Time Up - Draw";
     flash("Time up - draw");
+    playRoundResultSound("draw");
     reportRoundResult("time_up", null);
     showResultOverlay();
   }
@@ -816,6 +1048,7 @@
 
   function updateRoundTimer(dt, now) {
     state.timeLeft = Math.max(0, state.timeLeft - dt);
+    updateOverloadState();
     if (state.timeLeft <= 0 && aliveCount() > 1) {
       endRoundByTime(now);
     } else if (state.timeLeft <= 0) {
@@ -823,11 +1056,51 @@
     }
   }
 
+  function updateOverloadState() {
+    if (!state.overloadWarningShown && state.timeLeft <= OVERLOAD_WARNING_TIME && state.timeLeft > OVERLOAD_PHASE_1_TIME) {
+      state.overloadWarningShown = true;
+      flash("Hurry Up");
+      playHurrySound();
+      trackPlatform("overload_warning", platformState("overload_warning"));
+    }
+    overloadStages.forEach(function (stage) {
+      if (state.overloadStage >= stage.id || state.timeLeft > stage.timeLeft) return;
+      applyOverloadStage(stage);
+    });
+  }
+
+  function applyOverloadStage(stage) {
+    state.overloadStage = stage.id;
+    state.players.forEach(function (player) {
+      if (!player.alive) return;
+      player.overloadBombs += stage.buffs.bombs;
+      player.overloadFire += stage.buffs.fire;
+      player.overloadSpeed += stage.buffs.speed;
+      applyPlayerOverloadStats(player);
+    });
+    flash(stage.label + " +" + stage.buffs.bombs + " Bomb +" + stage.buffs.fire + " Fire +" + stage.buffs.speed + " Speed");
+    playOverloadSound(stage.id);
+    trackPlatform("overload_stage_" + stage.id, platformState("overload_stage_" + stage.id));
+    setPlatformState("overload");
+  }
+
+  function applyPlayerOverloadStats(player) {
+    player.maxBombs = Math.min(5, player.baseMaxBombs + player.overloadBombs);
+    player.fire = Math.min(6, player.baseFire + player.overloadFire);
+    player.speed = Math.min(5, player.baseSpeed + player.overloadSpeed);
+  }
+
   function updateResumeCountdown(dt) {
     if (state.resumeCountdown <= 0) return;
+    var before = Math.ceil(state.resumeCountdown / 1000);
     state.resumeCountdown = Math.max(0, state.resumeCountdown - dt);
+    var after = Math.ceil(state.resumeCountdown / 1000);
+    if (after > 0 && after < before) {
+      playCountdownSound(false);
+    }
     if (state.resumeCountdown === 0) {
       state.paused = false;
+      playCountdownSound(true);
       syncPauseButtons();
       trackPlatform("resume", platformState("resume"));
       setPlatformState("resume");
@@ -887,15 +1160,76 @@
 
   function currentInputDir() {
     if (touchDir) return touchDir;
-    if (keys.arrowup || keys.w) return { x: 0, y: -1 };
-    if (keys.arrowdown || keys.s) return { x: 0, y: 1 };
-    if (keys.arrowleft || keys.a) return { x: -1, y: 0 };
-    if (keys.arrowright || keys.d) return { x: 1, y: 0 };
-    return null;
+    return currentKeyboardDir();
   }
 
   function currentSecondaryInputDir() {
-    return touchSecondaryDir;
+    if (touchDir) return touchSecondaryDir;
+    return currentSecondaryKeyboardDir();
+  }
+
+  function currentKeyboardDir() {
+    compactKeyboardDirStack();
+    if (!keyboardDirStack.length) return null;
+    return copyDir(keyboardDirections[keyboardDirStack[keyboardDirStack.length - 1]]);
+  }
+
+  function currentSecondaryKeyboardDir() {
+    compactKeyboardDirStack();
+    if (keyboardDirStack.length < 2) return null;
+    return copyDir(keyboardDirections[keyboardDirStack[keyboardDirStack.length - 2]]);
+  }
+
+  function compactKeyboardDirStack() {
+    for (var i = keyboardDirStack.length - 1; i >= 0; i -= 1) {
+      if (!isKeyboardDirectionHeld(keyboardDirStack[i])) keyboardDirStack.splice(i, 1);
+    }
+  }
+
+  function isKeyboardDirectionHeld(name) {
+    return Object.keys(keyboardDirectionNames).some(function (key) {
+      return keyboardDirectionNames[key] === name && keys[key];
+    });
+  }
+
+  function pushKeyboardDirection(name) {
+    var existing = keyboardDirStack.indexOf(name);
+    if (existing !== -1) keyboardDirStack.splice(existing, 1);
+    keyboardDirStack.push(name);
+  }
+
+  function pressKeyboardKey(key, repeated) {
+    var name = keyboardDirectionNames[key];
+    if (!name) {
+      keys[key] = true;
+      return false;
+    }
+    var wasHeld = isKeyboardDirectionHeld(name);
+    keys[key] = true;
+    if (!repeated || !wasHeld || keyboardDirStack.indexOf(name) === -1) {
+      pushKeyboardDirection(name);
+    }
+    return true;
+  }
+
+  function releaseKeyboardKey(key) {
+    var name = keyboardDirectionNames[key];
+    keys[key] = false;
+    if (name && !isKeyboardDirectionHeld(name)) {
+      var existing = keyboardDirStack.indexOf(name);
+      if (existing !== -1) keyboardDirStack.splice(existing, 1);
+    }
+    return Boolean(name);
+  }
+
+  function clearKeyboardInput() {
+    keys = {};
+    keyboardDirStack = [];
+  }
+
+  function clearPlayerInput() {
+    clearKeyboardInput();
+    resetJoystick();
   }
 
   function updateAI(dt) {
@@ -1122,6 +1456,7 @@
       killPlayer(player, true);
     });
     if (hits.length) checkRoundEnd();
+    maybeShowDeathChoice();
   }
 
   function flash(message) {
@@ -1144,7 +1479,8 @@
     } else if (state.paused) {
       pauseLabel = " - Paused";
     }
-    roundStatus.textContent = currentDifficulty().label + " - " + currentMap().name + " - Round " + state.round + " - " + aliveCount() + " left - Time " + formatTime(state.timeLeft) + pauseLabel;
+    var overloadLabel = state.overloadStage > 0 ? " - Overload " + state.overloadStage : "";
+    roundStatus.textContent = currentDifficulty().label + " - " + currentMap().name + " - Round " + state.round + " - " + aliveCount() + " left - Time " + formatTime(state.timeLeft) + overloadLabel + pauseLabel;
     if (roundTimer) roundTimer.textContent = formatTime(state.timeLeft);
     if (hudTimer) hudTimer.textContent = formatTime(state.timeLeft);
     statBombs.textContent = player.maxBombs;
@@ -1205,15 +1541,15 @@
   }
 
   function showStartOverlay(kicker, body) {
+    hideDeathChoice();
     gamePhase = "start";
     state.paused = false;
     state.resumeCountdown = 0;
-    keys = {};
-    resetJoystick();
+    clearPlayerInput();
     setGameFlowContent(
       kicker || "Ready",
       "Round " + state.round,
-      body || currentDifficulty().label + " on " + currentMap().name + ". Survive 2 minutes or be the last one standing.",
+      body || currentDifficulty().label + " on " + currentMap().name + ". Survive 90 seconds or be the last one standing.",
       "Start Battle"
     );
     if (gameFlowOverlay) gameFlowOverlay.hidden = false;
@@ -1222,9 +1558,9 @@
   }
 
   function showResultOverlay() {
+    hideDeathChoice();
     gamePhase = "result";
-    keys = {};
-    resetJoystick();
+    clearPlayerInput();
     setGameFlowContent(
       "Round " + state.round + " Complete",
       state.resultText || "Round Over",
@@ -1236,6 +1572,54 @@
     setPlatformState("result");
   }
 
+  function maybeShowDeathChoice() {
+    var player = state.players[0];
+    if (!player || player.alive || state.ended || state.spectating || state.deathChoiceOpen) return;
+    if (!state.deathChoicePending || state.deathChoiceShown) return;
+    state.deathChoicePending = false;
+    state.deathChoiceShown = true;
+    state.deathChoiceOpen = true;
+    state.paused = true;
+    state.resumeCountdown = 0;
+    clearPlayerInput();
+    if (deathChoiceOverlay) deathChoiceOverlay.hidden = false;
+    syncPauseButtons();
+    trackPlatform("player_death_choice", platformState("player_death_choice"));
+    setPlatformState("player_death_choice");
+  }
+
+  function hideDeathChoice() {
+    if (!state) return;
+    state.deathChoiceOpen = false;
+    state.deathChoicePending = false;
+    if (deathChoiceOverlay) deathChoiceOverlay.hidden = true;
+  }
+
+  function restartAfterDeath(event) {
+    captureInput(event);
+    playButtonSound();
+    state = makeGame(true, false, false);
+    hideDeathChoice();
+    showStartOverlay("Try Again", "Restart this round and get back in fast.");
+    trackPlatform("death_restart", platformState("death_restart"));
+  }
+
+  function watchAfterDeath(event) {
+    captureInput(event);
+    playButtonSound();
+    state.spectating = true;
+    state.deathChoiceOpen = false;
+    state.deathChoicePending = false;
+    state.paused = false;
+    state.resumeCountdown = 0;
+    if (deathChoiceOverlay) deathChoiceOverlay.hidden = true;
+    syncPauseButtons();
+    updateUi();
+    flash("Watching the round");
+    trackPlatform("death_watch", platformState("death_watch"));
+    setPlatformState("spectating");
+  }
+
   function startGameFlow() {
     if (gamePhase === "result") {
       state = makeGame(true, true, false);
@@ -1243,11 +1627,11 @@
     gamePhase = "playing";
     state.paused = false;
     state.resumeCountdown = 0;
-    keys = {};
-    resetJoystick();
+    clearPlayerInput();
     if (gameFlowOverlay) gameFlowOverlay.hidden = true;
     syncPauseButtons();
     updateUi();
+    playRoundStartSound();
     trackPlatform("round_start", platformState("round_start"));
     setPlatformState("playing");
   }
@@ -1943,6 +2327,14 @@
 
   function syncPauseButtons() {
     allPauseButtons().forEach(function (button) {
+      if (state.deathChoiceOpen) {
+        button.setAttribute("aria-label", "Choose restart or watch");
+        button.title = "Choose restart or watch";
+        button.textContent = button.classList.contains("mobile-pause") ? "..." : "Choose";
+        button.classList.add("active");
+        button.disabled = true;
+        return;
+      }
       var label = state.resumeCountdown > 0 ? "Cancel resume countdown" : state.paused ? "Resume" : "Pause";
       button.setAttribute("aria-label", label);
       button.title = label;
@@ -2063,12 +2455,12 @@
   }
 
   function togglePause() {
-    if (gamePhase !== "playing" || state.ended) return;
+    if (gamePhase !== "playing" || state.ended || state.deathChoiceOpen) return;
+    playButtonSound();
     if (!state.paused) {
       state.paused = true;
       state.resumeCountdown = 0;
-      keys = {};
-      resetJoystick();
+      clearPlayerInput();
     } else if (state.resumeCountdown > 0) {
       state.resumeCountdown = 0;
     } else {
@@ -2081,12 +2473,12 @@
 
   function openSettings(event) {
     captureInput(event);
+    playButtonSound();
     if (gamePhase === "playing" && !state.ended && !state.paused) {
       state.paused = true;
       state.resumeCountdown = 0;
       settingsResumeAfterClose = true;
-      keys = {};
-      resetJoystick();
+      clearPlayerInput();
     } else {
       if (state.resumeCountdown > 0) state.resumeCountdown = 0;
       settingsResumeAfterClose = false;
@@ -2099,6 +2491,7 @@
 
   function closeSettings(event) {
     if (event) event.preventDefault();
+    playButtonSound();
     if (settingsModal) settingsModal.hidden = true;
     if (settingsResumeAfterClose && gamePhase === "playing" && state.paused && !state.ended) {
       state.resumeCountdown = RESUME_COUNTDOWN_TIME;
@@ -2118,8 +2511,7 @@
     if (gamePhase !== "playing" || state.ended || state.paused) return;
     state.paused = true;
     state.resumeCountdown = 0;
-    keys = {};
-    resetJoystick();
+    clearPlayerInput();
     syncPauseButtons();
     updateUi();
     trackPlatform("auto_pause", platformState("interruption"));
@@ -2127,6 +2519,7 @@
   }
 
   function resetRound() {
+    playButtonSound();
     state = makeGame(true, false, false);
     showStartOverlay("Round Reset");
     closeSettings();
@@ -2134,6 +2527,7 @@
   }
 
   function nextMap() {
+    playButtonSound();
     mapIndex = (mapIndex + 1) % mapTemplates.length;
     syncMapButtons();
     state = makeGame(false, false, true);
@@ -2148,6 +2542,7 @@
       return template.id === mapId;
     });
     if (nextIndex < 0) return;
+    playButtonSound();
     mapIndex = nextIndex;
     syncMapButtons();
     state = makeGame(false, false, true);
@@ -2159,18 +2554,31 @@
 
   function updateJoystick(event) {
     var rect = joystick.getBoundingClientRect();
-    var centerX = rect.left + rect.width / 2;
-    var centerY = rect.top + rect.height / 2;
+    var centerX = rect.left + rect.width / 2 + joystickBaseX;
+    var centerY = rect.top + rect.height / 2 + joystickBaseY;
     var dx = event.clientX - centerX;
     var dy = event.clientY - centerY;
     var distanceFromCenter = Math.sqrt(dx * dx + dy * dy);
-    var limit = rect.width * 0.32;
+
+    var limit = rect.width * JOYSTICK_MAX_RANGE;
+    if (distanceFromCenter > limit) {
+      var overflow = distanceFromCenter - limit;
+      var drift = Math.min(overflow, rect.width * 0.14);
+      joystickBaseX += dx / distanceFromCenter * drift;
+      joystickBaseY += dy / distanceFromCenter * drift;
+      clampJoystickBase(rect);
+      centerX = rect.left + rect.width / 2 + joystickBaseX;
+      centerY = rect.top + rect.height / 2 + joystickBaseY;
+      dx = event.clientX - centerX;
+      dy = event.clientY - centerY;
+      distanceFromCenter = Math.sqrt(dx * dx + dy * dy);
+    }
+
     var ratio = distanceFromCenter > 0 ? Math.min(distanceFromCenter, limit) / distanceFromCenter : 0;
     var knobX = dx * ratio;
     var knobY = dy * ratio;
 
-    joystickKnob.style.setProperty("--stick-x", knobX + "px");
-    joystickKnob.style.setProperty("--stick-y", knobY + "px");
+    setJoystickVisual(joystickBaseX, joystickBaseY, knobX, knobY);
 
     var deadzone = rect.width * JOYSTICK_DEADZONE;
     var absX = Math.abs(dx);
@@ -2198,19 +2606,46 @@
     event.preventDefault();
   }
 
+  function setJoystickBaseFromPointer(event) {
+    var rect = joystick.getBoundingClientRect();
+    joystickBaseX = event.clientX - (rect.left + rect.width / 2);
+    joystickBaseY = event.clientY - (rect.top + rect.height / 2);
+    clampJoystickBase(rect);
+    setJoystickVisual(joystickBaseX, joystickBaseY, 0, 0);
+  }
+
+  function clampJoystickBase(rect) {
+    var limit = rect.width * JOYSTICK_FLOAT_RANGE;
+    var distanceFromCenter = Math.sqrt(joystickBaseX * joystickBaseX + joystickBaseY * joystickBaseY);
+    if (distanceFromCenter <= limit || distanceFromCenter === 0) return;
+    joystickBaseX = joystickBaseX / distanceFromCenter * limit;
+    joystickBaseY = joystickBaseY / distanceFromCenter * limit;
+  }
+
+  function setJoystickVisual(baseX, baseY, stickX, stickY) {
+    if (joystick) {
+      joystick.style.setProperty("--base-x", baseX + "px");
+      joystick.style.setProperty("--base-y", baseY + "px");
+    }
+    if (joystickKnob) {
+      joystickKnob.style.setProperty("--stick-x", stickX + "px");
+      joystickKnob.style.setProperty("--stick-y", stickY + "px");
+    }
+  }
+
   function resetJoystick() {
     touchDir = null;
     touchSecondaryDir = null;
     joystickPointer = null;
+    joystickBaseX = 0;
+    joystickBaseY = 0;
     if (joystick) joystick.classList.remove("active");
-    if (joystickKnob) {
-      joystickKnob.style.setProperty("--stick-x", "0px");
-      joystickKnob.style.setProperty("--stick-y", "0px");
-    }
+    setJoystickVisual(0, 0, 0, 0);
   }
 
   function captureInput(event) {
     if (!event) return;
+    unlockAudio();
     event.preventDefault();
     if (event.currentTarget && event.currentTarget.setPointerCapture && event.pointerId !== undefined) {
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -2228,8 +2663,9 @@
   }
 
   function restartGame(reason) {
+    playButtonSound();
     state = makeGame(false, false, true);
-    showStartOverlay(reason || "Restarted", currentDifficulty().label + " on " + currentMap().name + ". Survive 2 minutes or be the last one standing.");
+    showStartOverlay(reason || "Restarted", currentDifficulty().label + " on " + currentMap().name + ". Survive 90 seconds or be the last one standing.");
     closeSettings();
     trackPlatform("game_restart", platformState("game_restart"));
     updateUi();
@@ -2237,6 +2673,7 @@
 
   function setDifficulty(nextDifficulty) {
     if (!difficultySettings[nextDifficulty]) return false;
+    playButtonSound();
     difficulty = nextDifficulty;
     syncDifficultyButtons();
     state = makeGame(false, false, true);
@@ -2249,6 +2686,7 @@
 
   function resumeWithCountdown() {
     if (gamePhase !== "playing" || state.ended || !state.paused) return false;
+    playButtonSound();
     state.resumeCountdown = RESUME_COUNTDOWN_TIME;
     syncPauseButtons();
     trackPlatform("resume_countdown", platformState("resume_countdown"));
@@ -2293,51 +2731,74 @@
   }
 
   document.addEventListener("keydown", function (event) {
+    unlockAudio();
     var key = event.key.toLowerCase();
+    var isBombKey = key === " " || key === "spacebar";
+    var handledMovement = false;
     if (isSettingsOpen()) {
       if (key === "escape") closeSettings(event);
-      if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "spacebar", "enter", "r", "p"].indexOf(key) !== -1) {
+      if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d", " ", "spacebar", "enter", "r", "p"].indexOf(key) !== -1) {
+        event.preventDefault();
+      }
+      return;
+    }
+    if (state.deathChoiceOpen) {
+      if ((key === "enter" || isBombKey || key === "r") && !event.repeat) {
+        restartAfterDeath(event);
+      } else if ((key === "escape" || key === "v") && !event.repeat) {
+        watchAfterDeath(event);
+      }
+      if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d", " ", "spacebar", "enter", "escape", "r", "v"].indexOf(key) !== -1) {
         event.preventDefault();
       }
       return;
     }
     if (isGameFlowOpen()) {
-      if (key === "enter" || key === " " || key === "spacebar") {
+      if ((key === "enter" || isBombKey) && !event.repeat) {
         startGameFlow();
         event.preventDefault();
       }
-      if (key === "r") {
+      if (key === "r" && !event.repeat) {
         resetRound();
         event.preventDefault();
       }
-      if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "spacebar", "enter"].indexOf(key) !== -1) {
+      if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d", " ", "spacebar", "enter"].indexOf(key) !== -1) {
         event.preventDefault();
       }
       return;
     }
-    keys[key] = true;
-    if (key === " " || key === "spacebar") {
-      placeBomb(state.players[0]);
+    handledMovement = pressKeyboardKey(key, event.repeat);
+    if (isBombKey) {
+      if (!event.repeat) placeBomb(state.players[0]);
       event.preventDefault();
+      return;
     }
-    if (key === "r") {
+    if (key === "r" && !event.repeat) {
+      clearPlayerInput();
       state = makeGame(true, false, false);
       showStartOverlay("Round Reset");
+      event.preventDefault();
+      return;
     }
     if (key === "p" && !event.repeat) {
       togglePause();
       event.preventDefault();
+      return;
     }
     if (key === "escape") {
       closeSettings(event);
     }
-    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].indexOf(key) !== -1) {
+    if (handledMovement || ["arrowup", "arrowdown", "arrowleft", "arrowright"].indexOf(key) !== -1) {
       event.preventDefault();
     }
   });
 
   document.addEventListener("keyup", function (event) {
-    keys[event.key.toLowerCase()] = false;
+    var key = event.key.toLowerCase();
+    var handledMovement = releaseKeyboardKey(key);
+    if (handledMovement || ["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "spacebar"].indexOf(key) !== -1) {
+      event.preventDefault();
+    }
   });
 
   document.addEventListener("visibilitychange", function () {
@@ -2357,6 +2818,7 @@
 
   window.addEventListener("blur", pauseForInterruption);
   window.addEventListener("message", handleHostMessage);
+  window.addEventListener("pointerdown", unlockAudio, { capture: true });
 
   ["contextmenu", "selectstart", "dragstart", "gesturestart"].forEach(function (eventName) {
     document.addEventListener(eventName, function (event) {
@@ -2432,6 +2894,22 @@
     button.addEventListener("click", nextMap);
   });
 
+  if (deathRestartBtn) {
+    deathRestartBtn.addEventListener("pointerdown", restartAfterDeath);
+    deathRestartBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      if (event.detail === 0) restartAfterDeath(event);
+    });
+  }
+
+  if (deathWatchBtn) {
+    deathWatchBtn.addEventListener("pointerdown", watchAfterDeath);
+    deathWatchBtn.addEventListener("click", function (event) {
+      event.preventDefault();
+      if (event.detail === 0) watchAfterDeath(event);
+    });
+  }
+
   if (settingsModal) {
     settingsModal.addEventListener("click", function (event) {
       if (event.target === settingsModal) closeSettings(event);
@@ -2440,9 +2918,10 @@
 
   if (joystick && joystickKnob) {
     joystick.addEventListener("pointerdown", function (event) {
+      captureInput(event);
       joystickPointer = event.pointerId;
       joystick.classList.add("active");
-      joystick.setPointerCapture(event.pointerId);
+      setJoystickBaseFromPointer(event);
       updateJoystick(event);
     });
     joystick.addEventListener("pointermove", function (event) {
