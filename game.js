@@ -4,6 +4,8 @@
   var COLS = 13;
   var ROWS = 11;
   var TILE = 64;
+  var WORLD_WIDTH = COLS * TILE;
+  var WORLD_HEIGHT = ROWS * TILE;
   var BOMB_TIME = 2200;
   var BLAST_TIME = 520;
   var BLAST_DAMAGE_TIME = 90;
@@ -26,7 +28,7 @@
   var AI_ESCAPE_DEPTH = 9;
 
   var canvas = document.getElementById("gameCanvas");
-  var ctx = canvas.getContext("2d");
+  var ctx = canvas.getContext("2d", { alpha: false });
   var appShell = document.querySelector(".app-shell");
   var boardWrap = document.querySelector(".board-wrap");
   var gameFlowOverlay = document.getElementById("gameFlowOverlay");
@@ -381,6 +383,7 @@
       itemsCollected: 0,
       kills: 0,
       deathCause: "",
+      score: 0,
       survivedSeconds: 0
     };
   }
@@ -617,6 +620,17 @@
   function randomAiCooldown() {
     var settings = currentDifficulty();
     return settings.aiThinkMin + Math.random() * (settings.aiThinkMax - settings.aiThinkMin);
+  }
+
+  function resizeCanvas() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var width = Math.round(WORLD_WIDTH * dpr);
+    var height = Math.round(WORLD_HEIGHT * dpr);
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   function getPlatformApi() {
@@ -1039,6 +1053,7 @@
     if (killerId === 0 && player.id !== 0) state.stats.kills += 1;
     if (player.id === 0) {
       state.deathChoicePending = true;
+      state.stats.survivedSeconds = elapsedRoundSeconds();
       state.stats.deathCause = deathCauseText(killerId);
       state.lastDeathCause = state.stats.deathCause;
       resetWinStreak();
@@ -1106,12 +1121,42 @@
     }, maxed ? 760 : 560);
   }
 
+  function elapsedRoundSeconds() {
+    return Math.max(0, Math.floor((ROUND_TIME - state.timeLeft) / 1000));
+  }
+
+  function playerSurvivedSeconds(player) {
+    if (player && player.alive) return elapsedRoundSeconds();
+    return state.stats.survivedSeconds || elapsedRoundSeconds();
+  }
+
+  function scoreMultiplier() {
+    if (difficulty === "hard") return 1.45;
+    if (difficulty === "normal") return 1.2;
+    return 1;
+  }
+
+  function calculateRoundScore(playerWon, survivedSeconds) {
+    var player = state.players[0];
+    var aliveBonus = player && player.alive ? 650 : 0;
+    var winBonus = playerWon ? 1600 : aliveBonus;
+    var raw = survivedSeconds * 12 +
+      state.stats.kills * 420 +
+      state.stats.itemsCollected * 90 +
+      state.stats.bombsPlaced * 12 +
+      playerWinStreak * 250 +
+      winBonus;
+    return Math.max(0, Math.round(raw * scoreMultiplier()));
+  }
+
   function reportRoundResult(reason, winner) {
-    var survivedSeconds = Math.max(0, Math.floor((ROUND_TIME - state.timeLeft) / 1000));
-    state.stats.survivedSeconds = survivedSeconds;
     var player = state.players[0];
     var playerWon = Boolean(winner && winner.id === 0);
     updateWinStreak(playerWon);
+    var survivedSeconds = playerSurvivedSeconds(player);
+    var score = calculateRoundScore(playerWon, survivedSeconds);
+    state.stats.survivedSeconds = survivedSeconds;
+    state.stats.score = score;
     var result = state.resultText || (winner ? winner.name + " wins" : "Draw");
     var meta = {
       round: state.round,
@@ -1127,12 +1172,11 @@
       bombsPlaced: state.stats.bombsPlaced,
       itemsCollected: state.stats.itemsCollected,
       kills: state.stats.kills,
-      deathCause: state.stats.deathCause
+      deathCause: state.stats.deathCause,
+      score: score
     };
     trackPlatform("round_end", meta);
-    submitPlatformScore("survival_seconds", survivedSeconds, meta);
-    if (playerWon) submitPlatformScore("wins", player.wins, meta);
-    if (playerWon) submitPlatformScore("win_streak", playerWinStreak, meta);
+    submitPlatformScore("score", score, meta);
     setPlatformState(reason || "round_end");
   }
 
@@ -1767,7 +1811,7 @@
     var death = stats.deathCause ? " / Cause: " + stats.deathCause : "";
     var streak = playerWinStreak > 0 ? " / Streak " + playerWinStreak : "";
     var best = playerBestWinStreak > 0 ? " / Best " + playerBestWinStreak : "";
-    return "Survived " + stats.survivedSeconds + "s / KOs " + stats.kills + streak + best + " / Items " + stats.itemsCollected + " / Bombs " + stats.bombsPlaced + death + ". Wins: You " + state.players[0].wins + " / Bolt " + state.players[1].wins + " / Mint " + state.players[2].wins + " / Gold " + state.players[3].wins;
+    return "Score " + stats.score + " / Survived " + stats.survivedSeconds + "s / KOs " + stats.kills + streak + best + " / Items " + stats.itemsCollected + " / Bombs " + stats.bombsPlaced + death + ". Wins: You " + state.players[0].wins + " / Bolt " + state.players[1].wins + " / Mint " + state.players[2].wins + " / Gold " + state.players[3].wins;
   }
 
   function maybeShowDeathChoice() {
@@ -1840,7 +1884,7 @@
   }
 
   function render() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     drawGrid();
     drawBlastGuides();
     drawBombs();
@@ -2459,10 +2503,10 @@
     var alpha = state.screenHitTimer / SCREEN_HIT_TIME;
     ctx.save();
     ctx.fillStyle = "rgba(177, 38, 31, " + (0.12 * alpha) + ")";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     ctx.strokeStyle = "rgba(255, 94, 78, " + (0.52 * alpha) + ")";
     ctx.lineWidth = 12 + 10 * alpha;
-    ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+    ctx.strokeRect(8, 8, WORLD_WIDTH - 16, WORLD_HEIGHT - 16);
     ctx.restore();
   }
 
@@ -2471,15 +2515,15 @@
     var alpha = state.overloadStage > 1 ? 0.18 : 0.1;
     ctx.save();
     ctx.fillStyle = "rgba(229, 184, 76, " + alpha + ")";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     ctx.strokeStyle = state.overloadStage > 1 ? "rgba(255, 120, 82, 0.62)" : "rgba(229, 184, 76, 0.5)";
     ctx.lineWidth = state.overloadStage > 1 ? 10 : 7;
-    ctx.strokeRect(6, 6, canvas.width - 12, canvas.height - 12);
+    ctx.strokeRect(6, 6, WORLD_WIDTH - 12, WORLD_HEIGHT - 12);
     ctx.fillStyle = state.overloadStage > 1 ? "#ffb18d" : "#fff2a8";
     ctx.font = "bold 20px sans-serif";
     ctx.textAlign = "right";
     ctx.textBaseline = "top";
-    ctx.fillText(state.overloadStage > 1 ? "MAX OVERLOAD" : "OVERLOAD", canvas.width - 16, 14);
+    ctx.fillText(state.overloadStage > 1 ? "MAX OVERLOAD" : "OVERLOAD", WORLD_WIDTH - 16, 14);
     ctx.restore();
   }
 
@@ -2495,7 +2539,7 @@
 
   function drawOverlay() {
     ctx.fillStyle = "rgba(10, 12, 14, 0.58)";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     ctx.fillStyle = "#f4f2ea";
     ctx.font = "bold 42px sans-serif";
     ctx.textAlign = "center";
@@ -2503,22 +2547,22 @@
     if (state.paused && !state.ended) {
       if (state.resumeCountdown > 0) {
         ctx.font = "bold 86px sans-serif";
-        ctx.fillText(Math.ceil(state.resumeCountdown / 1000), canvas.width / 2, canvas.height / 2 - 8);
+        ctx.fillText(Math.ceil(state.resumeCountdown / 1000), WORLD_WIDTH / 2, WORLD_HEIGHT / 2 - 8);
         ctx.font = "bold 18px sans-serif";
         ctx.fillStyle = "rgba(244, 242, 234, 0.74)";
-        ctx.fillText("Resuming", canvas.width / 2, canvas.height / 2 + 58);
+        ctx.fillText("Resuming", WORLD_WIDTH / 2, WORLD_HEIGHT / 2 + 58);
         return;
       }
-      ctx.fillText("Paused", canvas.width / 2, canvas.height / 2);
+      ctx.fillText("Paused", WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
       ctx.font = "bold 18px sans-serif";
       ctx.fillStyle = "rgba(244, 242, 234, 0.74)";
-      ctx.fillText("Press P or Resume to start countdown", canvas.width / 2, canvas.height / 2 + 42);
+      ctx.fillText("Press P or Resume to start countdown", WORLD_WIDTH / 2, WORLD_HEIGHT / 2 + 42);
       return;
     }
     var winner = state.players.find(function (player) {
       return player.alive;
     });
-    ctx.fillText(state.resultText || (winner ? winner.name + " wins" : "Draw"), canvas.width / 2, canvas.height / 2);
+    ctx.fillText(state.resultText || (winner ? winner.name + " wins" : "Draw"), WORLD_WIDTH / 2, WORLD_HEIGHT / 2);
   }
 
   function roundRect(x, y, w, h, r) {
@@ -3110,7 +3154,11 @@
 
   window.addEventListener("blur", pauseForInterruption);
   window.addEventListener("message", handleHostMessage);
+  window.addEventListener("resize", resizeCanvas);
   window.addEventListener("pointerdown", unlockAudio, { capture: true });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", resizeCanvas);
+  }
 
   ["contextmenu", "selectstart", "dragstart", "gesturestart"].forEach(function (eventName) {
     document.addEventListener(eventName, function (event) {
@@ -3263,6 +3311,7 @@
   }
 
   exposeHostApi();
+  resizeCanvas();
   showStartOverlay();
   updateUi();
   syncDifficultyButtons();
