@@ -1,6 +1,6 @@
-# Bubble Battle MVP
+# Bubble Battle
 
-A small browser-based Bomberman-like prototype.
+A browser-based Bomberman-like arena game.
 
 ## Scope
 
@@ -22,7 +22,19 @@ A small browser-based Bomberman-like prototype.
 - Sound toggle and supported-device vibration toggle for mobile-friendly feedback
 - Keyboard and multi-touch joystick controls with 3-second resume countdown
 - Fixed mobile viewport with selection, long-press menu, and page scroll guards
-- AIGameShare-ready iframe interface with SDK/postMessage fallback, state updates, analytics events, and leaderboard scores for `survival_seconds`, `wins`, and `win_streak`
+- AIGameShare-ready iframe interface with SDK/postMessage fallback, state updates, analytics events, and the default `score` leaderboard key
+
+## AIGameShare Upload
+
+- Suggested upload package filename: `bubble-battle-mvp-aigameshare.zip`
+- `index.html` is at the zip root, with only relative local assets.
+- Recommended aspect ratio: `9:16`
+- Mobile friendly: `true`
+- Device support: `desktop,mobile`
+- Leaderboard key: `score`
+- Leaderboard name: `High Score`
+- Sort direction: `desc`
+- Value type: `number`
 
 ## Difficulty
 

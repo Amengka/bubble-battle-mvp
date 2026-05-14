@@ -1,6 +1,6 @@
 # Project Memory: Bubble Battle MVP
 
-Last updated: 2026-05-01
+Last updated: 2026-05-13
 
 This file records the current project context so future work can continue without
 reconstructing decisions from the chat history.
@@ -247,14 +247,19 @@ reconstructing decisions from the chat history.
   - `track("round_end")`
   - `track("pause")`, `track("resume")`, settings/map/difficulty events
   - `setState()` for current phase, round, map, difficulty, timer, pause, result
-  - `submitScore("survival_seconds", value)`
-  - `submitScore("wins", value)` when the local player wins
-  - `submitScore("win_streak", value)` when the local player wins
+  - `submitScore("score", value)` at round end
+  - `score` is a single-round arcade score derived from survival time, KOs,
+    item pickups, bombs placed, win/streak bonus, and difficulty multiplier.
   - Score/state metadata stays flat and within the SDK's 16-field limit.
   - If `window.AIGameShare` is not injected, embed mode falls back to the same
     `aigameshare:*` `postMessage` protocol used by the SDK.
   - `win_streak` increments only on local-player wins and resets on loss, draw,
     death restart, manual reset, map change, difficulty change, or full restart.
+  - Player survival time is frozen at the local player's elimination, so a
+    watched AI finish does not inflate the submitted score.
+  - Canvas uses a fixed 832 x 704 logical world with DPR-aware backing-store
+    scaling, keeping gameplay coordinates stable while improving iframe clarity.
+- AIGameShare upload notes now live in `AIGAMESHARE.md`.
 - Public in-game host API:
   - `window.BubbleBattle.start()`
   - `window.BubbleBattle.restart()`
